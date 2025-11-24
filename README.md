@@ -147,8 +147,9 @@ helm install httproute-controller httproute-controller/httproute-controller \
 **From GitHub release:**
 
 ```sh
+# Replace v0.3.5 with the desired version
 helm install httproute-controller \
-  https://github.com/Piotr1215/httproute-controller/releases/download/v0.1.0/httproute-controller-0.1.0.tgz \
+  https://github.com/Piotr1215/httproute-controller/releases/download/v0.3.5/httproute-controller-0.3.5.tgz \
   --namespace httproute-system \
   --create-namespace
 ```
@@ -232,14 +233,14 @@ git push origin v0.2.0
 ```
 
 The release pipeline automatically:
-1. Builds and pushes multi-platform Docker images to `ghcr.io/piotr1215/httproute-controller`
+1. Builds and pushes multi-platform Docker images to `piotrzan/httproute-controller`
 2. Packages the Helm chart with correct version metadata
 3. Generates `install.yaml` bundle
 4. Creates GitHub release with artifacts
 5. Updates Helm repository index on GitHub Pages
 
 **Release artifacts:**
-- Docker image: `ghcr.io/piotr1215/httproute-controller:<version>`
+- Docker image: `piotrzan/httproute-controller:<version>`
 - Helm chart: Available from GitHub releases and Helm repository
 - Install bundle: `dist/install.yaml`
 
