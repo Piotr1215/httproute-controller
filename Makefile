@@ -61,21 +61,36 @@ vet: ## Run go vet against code.
 test: manifests generate fmt vet setup-envtest ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test $$(go list ./... | grep -v /e2e) -coverprofile cover.out
 
+# E2E test cluster name and image
+KIND_CLUSTER_NAME ?= httproute-test
+E2E_IMG ?= httproute-controller:e2e
+
 # TODO(user): To use a different vendor for e2e tests, modify the setup under 'tests/e2e'.
 # The default setup assumes Kind is pre-installed and builds/loads the Manager Docker image locally.
 # CertManager is installed by default; skip with:
 # - CERT_MANAGER_INSTALL_SKIP=true
 .PHONY: test-e2e
-test-e2e: manifests generate fmt vet ## Run the e2e tests. Expected an isolated environment using Kind.
+test-e2e: manifests generate fmt vet ## Run the e2e tests. Creates Kind cluster, builds/loads image, runs tests.
 	@command -v kind >/dev/null 2>&1 || { \
 		echo "Kind is not installed. Please install Kind manually."; \
 		exit 1; \
 	}
-	@kind get clusters | grep -q 'kind' || { \
-		echo "No Kind cluster is running. Please start a Kind cluster before running the e2e tests."; \
-		exit 1; \
+	@kind get clusters 2>/dev/null | grep -q "^$(KIND_CLUSTER_NAME)$$" || { \
+		echo "Creating Kind cluster '$(KIND_CLUSTER_NAME)'..."; \
+		kind create cluster --name $(KIND_CLUSTER_NAME); \
 	}
-	go test ./test/e2e/ -v -ginkgo.v
+	@kubectl config use-context kind-$(KIND_CLUSTER_NAME)
+	@echo "Installing Gateway API CRDs..."
+	@$(KUBECTL) apply -f config/crd/gateway-api/gateway-api-crds.yaml
+	@echo "Building image $(E2E_IMG)..."
+	@$(CONTAINER_TOOL) build -t $(E2E_IMG) .
+	@echo "Loading image to Kind cluster..."
+	@kind load docker-image $(E2E_IMG) --name $(KIND_CLUSTER_NAME)
+	KIND_CLUSTER=$(KIND_CLUSTER_NAME) E2E_IMG=$(E2E_IMG) go test ./test/e2e/ -v -ginkgo.v
+
+.PHONY: test-e2e-cleanup
+test-e2e-cleanup: ## Delete the e2e test Kind cluster
+	@kind delete cluster --name $(KIND_CLUSTER_NAME) 2>/dev/null || true
 
 .PHONY: lint
 lint: golangci-lint ## Run golangci-lint linter
