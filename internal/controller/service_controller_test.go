@@ -190,12 +190,12 @@ var _ = Describe("Service Controller", func() {
 
 			// ASSERT: Verify ReferenceGrant content
 			Expect(grant.Spec.From).To(HaveLen(1))
-			Expect(grant.Spec.From[0].Group).To(Equal(gatewayv1.GroupName))
-			Expect(grant.Spec.From[0].Kind).To(Equal(gatewayv1.Kind("HTTPRoute")))
+			Expect(string(grant.Spec.From[0].Group)).To(Equal(gatewayv1.GroupName))
+			Expect(string(grant.Spec.From[0].Kind)).To(Equal("HTTPRoute"))
 			Expect(string(grant.Spec.From[0].Namespace)).To(Equal("envoy-gateway-system"))
 			Expect(grant.Spec.To).To(HaveLen(1))
-			Expect(grant.Spec.To[0].Group).To(Equal(gatewayv1.Group("")))
-			Expect(grant.Spec.To[0].Kind).To(Equal(gatewayv1.Kind("Service")))
+			Expect(string(grant.Spec.To[0].Group)).To(Equal(""))
+			Expect(string(grant.Spec.To[0].Kind)).To(Equal("Service"))
 
 			// ASSERT: Verify OwnerReference for garbage collection
 			Expect(grant.OwnerReferences).To(HaveLen(1))
@@ -411,7 +411,10 @@ var _ = Describe("Service Controller", func() {
 	})
 
 	Context("When Service is deleted", func() {
-		It("should automatically clean up HTTPRoute and ReferenceGrant via OwnerReferences", func() {
+		// NOTE: OwnerReference garbage collection requires kube-controller-manager
+		// which is not present in envtest. This test requires a real cluster.
+		// See: https://github.com/kubernetes-sigs/controller-runtime/issues/626
+		PIt("should automatically clean up HTTPRoute and ReferenceGrant via OwnerReferences", func() {
 			ctx := context.Background()
 
 			// ARRANGE: Create service

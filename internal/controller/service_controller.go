@@ -39,6 +39,7 @@ const (
 	AnnotationGateway          = "gateway.homelab.local/gateway"
 	AnnotationGatewayNamespace = "gateway.homelab.local/gateway-namespace"
 	AnnotationPort             = "gateway.homelab.local/port"
+	FinalizerHTTPRoute         = "gateway.homelab.local/httproute-finalizer"
 )
 
 // ServiceReconciler reconciles a Service object
@@ -47,7 +48,7 @@ type ServiceReconciler struct {
 	Scheme *runtime.Scheme
 }
 
-// +kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch
+// +kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;update;patch
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=httproutes,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=referencegrants,verbs=get;list;watch;create;update;patch;delete
 
@@ -58,7 +59,8 @@ type ServiceReconciler struct {
 // The reconciler follows modern Kubernetes controller best practices:
 // - Level-based triggers (reconciles full state, not just events)
 // - Idempotent operations (safe to call multiple times)
-// - OwnerReferences for automatic garbage collection
+// - Finalizers for cross-namespace resource cleanup (HTTPRoute)
+// - OwnerReferences for same-namespace resources (ReferenceGrant)
 // - Cross-namespace resource management via ReferenceGrant
 func (r *ServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
@@ -67,17 +69,50 @@ func (r *ServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	svc := &corev1.Service{}
 	if err := r.Get(ctx, req.NamespacedName, svc); err != nil {
 		if errors.IsNotFound(err) {
-			// Service deleted - OwnerReferences will handle cleanup
+			// Service deleted - nothing to do
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
 	}
 
+	// Handle Service deletion with finalizer
+	if !svc.DeletionTimestamp.IsZero() {
+		// Service is being deleted
+		if controllerutil.ContainsFinalizer(svc, FinalizerHTTPRoute) {
+			// Our finalizer is present - clean up HTTPRoute
+			log.Info("Service being deleted, cleaning up HTTPRoute", "service", req.NamespacedName)
+			if _, err := r.cleanupResources(ctx, svc); err != nil {
+				return ctrl.Result{}, err
+			}
+
+			// Remove finalizer
+			controllerutil.RemoveFinalizer(svc, FinalizerHTTPRoute)
+			if err := r.Update(ctx, svc); err != nil {
+				return ctrl.Result{}, err
+			}
+			log.Info("Finalizer removed, Service can be deleted", "service", req.NamespacedName)
+		}
+		return ctrl.Result{}, nil
+	}
+
 	// Check if Service should be exposed
 	expose := svc.Annotations[AnnotationExpose]
 	if expose != "true" {
-		// Service not marked for exposure - clean up if resources exist
-		return r.cleanupResources(ctx, svc)
+		// Service not marked for exposure - clean up if resources exist and remove finalizer
+		result, err := r.cleanupResources(ctx, svc)
+		if err != nil {
+			return result, err
+		}
+
+		// Remove finalizer if present
+		if controllerutil.ContainsFinalizer(svc, FinalizerHTTPRoute) {
+			controllerutil.RemoveFinalizer(svc, FinalizerHTTPRoute)
+			if err := r.Update(ctx, svc); err != nil {
+				return ctrl.Result{}, err
+			}
+			log.Info("Finalizer removed (expose=false)", "service", req.NamespacedName)
+		}
+		return result, nil
 	}
 
 	// Validate required annotations
@@ -123,12 +158,22 @@ func (r *ServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, err
 	}
 
+	// Add finalizer if not present (ensures cleanup when Service is deleted)
+	if !controllerutil.ContainsFinalizer(svc, FinalizerHTTPRoute) {
+		controllerutil.AddFinalizer(svc, FinalizerHTTPRoute)
+		if err := r.Update(ctx, svc); err != nil {
+			return ctrl.Result{}, err
+		}
+		log.Info("Finalizer added to Service", "service", req.NamespacedName)
+	}
+
 	log.Info("successfully reconciled Service", "service", req.NamespacedName, "hostname", hostname)
 	return ctrl.Result{}, nil
 }
 
 // reconcileHTTPRoute creates or updates the HTTPRoute for the Service.
-// Uses OwnerReferences for automatic garbage collection when Service is deleted.
+// Does NOT use OwnerReferences (cross-namespace not supported by Kubernetes).
+// Cleanup is handled via finalizers on the Service.
 // This is idempotent - safe to call multiple times with same inputs.
 func (r *ServiceReconciler) reconcileHTTPRoute(ctx context.Context, svc *corev1.Service, hostname, gatewayName, gatewayNamespace string, port int32) error {
 	routeName := fmt.Sprintf("%s-%s", svc.Namespace, svc.Name)
@@ -170,18 +215,9 @@ func (r *ServiceReconciler) reconcileHTTPRoute(ctx context.Context, svc *corev1.
 		},
 	}
 
-	// Set OwnerReference (cross-namespace owner reference)
-	// Note: Cross-namespace OwnerReferences require special handling
-	// We set the reference but Kubernetes won't enforce cascading deletion across namespaces
-	// The controller must handle cleanup explicitly when expose annotation is removed
-	route.OwnerReferences = []metav1.OwnerReference{
-		{
-			APIVersion: "v1",
-			Kind:       "Service",
-			Name:       svc.Name,
-			UID:        svc.UID,
-		},
-	}
+	// DO NOT set cross-namespace OwnerReference - Kubernetes API server rejects it
+	// Instead, we use finalizers on the Service to ensure cleanup of HTTPRoute
+	// Cross-namespace ownership is not supported by Kubernetes for security reasons
 
 	// Check if HTTPRoute exists
 	existing := &gatewayv1.HTTPRoute{}
@@ -189,14 +225,32 @@ func (r *ServiceReconciler) reconcileHTTPRoute(ctx context.Context, svc *corev1.
 	if err != nil {
 		if errors.IsNotFound(err) {
 			// Create new HTTPRoute
-			return r.Create(ctx, route)
+			log := log.FromContext(ctx)
+			log.Info("Creating HTTPRoute",
+				"name", route.Name,
+				"namespace", route.Namespace,
+				"hostname", hostname,
+				"ownerRefs", route.OwnerReferences)
+
+			createErr := r.Create(ctx, route)
+			if createErr != nil {
+				log.Error(createErr, "FAILED to create HTTPRoute",
+					"name", route.Name,
+					"namespace", route.Namespace,
+					"error", createErr.Error())
+			} else {
+				log.Info("SUCCESS: HTTPRoute created", "name", route.Name)
+			}
+			return createErr
 		}
 		return err
 	}
 
 	// Update existing HTTPRoute
+	log := log.FromContext(ctx)
+	log.Info("Updating existing HTTPRoute", "name", routeName)
 	existing.Spec = route.Spec
-	existing.OwnerReferences = route.OwnerReferences
+	// Do NOT update OwnerReferences - cross-namespace ownership not supported
 	return r.Update(ctx, existing)
 }
 
@@ -291,14 +345,15 @@ func (r *ServiceReconciler) cleanupResources(ctx context.Context, svc *corev1.Se
 }
 
 // SetupWithManager sets up the controller with the Manager.
-// Watches Services and owns HTTPRoute and ReferenceGrant resources.
+// Watches Services and owns ReferenceGrant resources.
+// HTTPRoute is NOT owned via OwnerReferences (cross-namespace not supported).
+// Instead, finalizers on Service ensure cleanup of HTTPRoute on deletion.
 // Uses modern controller-runtime patterns:
 // - For() watches the primary resource (Service)
 // - Owns() watches secondary resources for changes (triggers reconciliation of owner)
 func (r *ServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&corev1.Service{}).
-		Owns(&gatewayv1.HTTPRoute{}).
 		Owns(&gatewayv1beta1.ReferenceGrant{}).
 		Named("service").
 		Complete(r)
