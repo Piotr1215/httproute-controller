@@ -4,32 +4,87 @@ Kubernetes controller that automatically generates Gateway API HTTPRoutes from S
 
 ## Overview
 
-This controller watches Kubernetes Services and automatically creates Gateway API HTTPRoute and ReferenceGrant resources based on annotations. It eliminates the need to manually create HTTPRoute resources for each service you want to expose through a Gateway.
+Convenience controller for creating HTTPRoutes. Watches Services with specific annotations and auto-generates HTTPRoute + ReferenceGrant resources, eliminating manual YAML creation for each exposed service.
 
 **Built with:**
 - Kubebuilder v4.5.1
 - Gateway API v1.2.1
 - Controller-runtime v0.20.2
-- Modern Kubernetes controller best practices (2024-2025)
 
 ## Architecture
 
 **Controller Name:** `homelab.local/httproute-controller`
 
-**Reconciliation Pattern:**
-- **Level-based triggers** - Reconciles full state, not just events
-- **Idempotent operations** - Safe to call multiple times with same inputs
-- **OwnerReferences** - Automatic garbage collection
-- **Cross-namespace** - Secure cross-namespace access via ReferenceGrant
+**Reconciliation:**
+- Level-based triggers (reconciles full state)
+- Idempotent operations
+- OwnerReferences for same-namespace resources
+- Finalizers for cross-namespace cleanup
+
+**Constraints:**
+- HTTPRoute must be in gateway namespace (Kubernetes blocks cross-namespace OwnerReferences)
+- ReferenceGrant must be in service namespace
+- HTTPS only (targets gateway `https` section)
+- Single service per HTTPRoute (no aggregation)
 
 ## Features
 
-✅ **Automatic HTTPRoute generation** from Service annotations
-✅ **Cross-namespace support** via ReferenceGrant
-✅ **OwnerReferences** for automatic cleanup
-✅ **Configurable gateway** (name, namespace)
-✅ **Idempotent reconciliation** (modern controller patterns)
-✅ **Comprehensive test coverage** (TDD approach)
+**Annotation-driven automation:**
+- Watches Services with `gateway.homelab.local/expose: "true"`
+- Auto-generates HTTPRoute + ReferenceGrant from annotations
+- No manual resource creation required
+
+**Cross-namespace security:**
+- HTTPRoute deployed in gateway namespace (e.g., `envoy-gateway-system`)
+- Service remains in application namespace (e.g., `default`)
+- ReferenceGrant enables secure cross-namespace backend references
+- Prevents unauthorized Service access from other namespaces
+
+**Lifecycle management:**
+- Finalizers ensure HTTPRoute cleanup when Service is deleted
+- OwnerReferences auto-delete ReferenceGrant with Service
+- Removing `expose: "true"` triggers resource cleanup
+- Idempotent reconciliation (safe to run multiple times)
+
+**Configuration:**
+- Gateway name/namespace configurable per Service
+- Defaults: `homelab-gateway` in `envoy-gateway-system`
+- Port selection: explicit annotation or first Service port
+- HTTPS-only (targets gateway's `https` section)
+
+### Controller Lifecycle
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant Service
+    participant Controller
+    participant GatewayNS as Gateway Namespace
+    participant ServiceNS as Service Namespace
+
+    User->>Service: Add annotations<br/>(expose=true, hostname)
+    Service->>Controller: Reconcile triggered
+
+    Controller->>Controller: Validate annotations
+    Controller->>GatewayNS: Create/Update HTTPRoute
+    Note over GatewayNS: HTTPRoute: myapp.homelab.local<br/>Backend: Service in app namespace
+
+    Controller->>ServiceNS: Create/Update ReferenceGrant
+    Note over ServiceNS: Allows HTTPRoute to reference Service
+
+    Controller->>Service: Add finalizer
+    Note over Service: Ensures cleanup on deletion
+
+    rect rgba(255, 100, 100, 0.1)
+        Note over User,ServiceNS: Service Deletion
+        User->>Service: Delete Service
+        Service->>Controller: Finalizer triggers cleanup
+        Controller->>GatewayNS: Delete HTTPRoute
+        Controller->>ServiceNS: Delete ReferenceGrant<br/>(via OwnerReference)
+        Controller->>Service: Remove finalizer
+        Service->>Service: Deletion completes
+    end
+```
 
 ## Usage
 
@@ -75,132 +130,79 @@ spec:
    - Allows HTTPRoute from gateway namespace to reference Service
    - OwnerReference to Service (automatic garbage collection)
 
-## Getting Started
+## Installation
 
-### Prerequisites
-- go version v1.23.0+
-- docker version 17.03+.
-- kubectl version v1.11.3+.
-- Access to a Kubernetes v1.11.3+ cluster.
-
-### To Deploy on the cluster
-**Build and push your image to the location specified by `IMG`:**
+### Using Helm (Recommended)
 
 ```sh
-make docker-build docker-push IMG=<some-registry>/httproute-controller:tag
+helm install httproute-controller ./helm/httproute-controller \
+  --namespace httproute-system \
+  --create-namespace
 ```
 
-**NOTE:** This image ought to be published in the personal registry you specified.
-And it is required to have access to pull the image from the working environment.
-Make sure you have the proper permission to the registry if the above commands don’t work.
+### Using kubectl
 
-**Install the CRDs into the cluster:**
+```sh
+kubectl apply -f https://raw.githubusercontent.com/Piotr1215/httproute-controller/main/dist/install.yaml
+```
 
+## Development
+
+### Prerequisites
+- go v1.23.0+
+- kubectl v1.11.3+
+- Access to a Kubernetes cluster
+- Gateway API CRDs installed
+
+### Local Development
+
+**Install Gateway API CRDs:**
 ```sh
 make install
 ```
 
-**Deploy the Manager to the cluster with the image specified by `IMG`:**
-
+**Run controller locally:**
 ```sh
-make deploy IMG=<some-registry>/httproute-controller:tag
+make run
 ```
 
-> **NOTE**: If you encounter RBAC errors, you may need to grant yourself cluster-admin
-privileges or be logged in as admin.
-
-**Create instances of your solution**
-You can apply the samples (examples) from the config/sample:
-
+**Run tests:**
 ```sh
-kubectl apply -k config/samples/
+make test
 ```
 
->**NOTE**: Ensure that the samples has default values to test it out.
-
-### To Uninstall
-**Delete the instances (CRs) from the cluster:**
-
+**Build and test in cluster:**
 ```sh
-kubectl delete -k config/samples/
+# Build and push image
+make docker-build docker-push IMG=<your-registry>/httproute-controller:tag
+
+# Deploy to cluster
+make deploy IMG=<your-registry>/httproute-controller:tag
 ```
 
-**Delete the APIs(CRDs) from the cluster:**
-
+**Uninstall:**
 ```sh
+make undeploy
 make uninstall
 ```
 
-**UnDeploy the controller from the cluster:**
+## Release
+
+### Build installer bundle
 
 ```sh
-make undeploy
+make build-installer IMG=ghcr.io/piotr1215/httproute-controller:v0.1.0
 ```
 
-## Project Distribution
+Generates `dist/install.yaml` with all resources.
 
-Following the options to release and provide this solution to the users.
-
-### By providing a bundle with all YAML files
-
-1. Build the installer for the image built and published in the registry:
+### Package Helm chart
 
 ```sh
-make build-installer IMG=<some-registry>/httproute-controller:tag
+helm package ./helm/httproute-controller -d dist/
 ```
-
-**NOTE:** The makefile target mentioned above generates an 'install.yaml'
-file in the dist directory. This file contains all the resources built
-with Kustomize, which are necessary to install this project without its
-dependencies.
-
-2. Using the installer
-
-Users can just run 'kubectl apply -f <URL for YAML BUNDLE>' to install
-the project, i.e.:
-
-```sh
-kubectl apply -f https://raw.githubusercontent.com/<org>/httproute-controller/<tag or branch>/dist/install.yaml
-```
-
-### By providing a Helm Chart
-
-1. Build the chart using the optional helm plugin
-
-```sh
-kubebuilder edit --plugins=helm/v1-alpha
-```
-
-2. See that a chart was generated under 'dist/chart', and users
-can obtain this solution from there.
-
-**NOTE:** If you change the project, you need to update the Helm Chart
-using the same command above to sync the latest changes. Furthermore,
-if you create webhooks, you need to use the above command with
-the '--force' flag and manually ensure that any custom configuration
-previously added to 'dist/chart/values.yaml' or 'dist/chart/manager/manager.yaml'
-is manually re-applied afterwards.
-
-## Contributing
-// TODO(user): Add detailed information on how you would like others to contribute to this project
-
-**NOTE:** Run `make help` for more information on all potential `make` targets
-
-More information can be found via the [Kubebuilder Documentation](https://book.kubebuilder.io/introduction.html)
 
 ## License
 
-Copyright 2025.
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+MIT License - see [LICENSE](LICENSE) file for details.
 

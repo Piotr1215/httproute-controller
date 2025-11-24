@@ -1,0 +1,28 @@
+Thank you for installing {{ .Chart.Name }}!
+
+Release name: {{ .Release.Name }}
+Namespace: {{ .Release.Namespace }}
+
+The HTTPRoute controller is now running and watching for Services with the annotation:
+  gateway.homelab.local/expose: "true"
+
+To expose a Service through the Gateway:
+
+  kubectl annotate service <service-name> \
+    gateway.homelab.local/expose=true \
+    gateway.homelab.local/hostname=<hostname>
+
+Example:
+  kubectl annotate service myapp \
+    gateway.homelab.local/expose=true \
+    gateway.homelab.local/hostname=myapp.homelab.local
+
+The controller will automatically create:
+  - HTTPRoute in the gateway namespace
+  - ReferenceGrant for cross-namespace access
+
+Check controller status:
+  kubectl get deployment -n {{ .Release.Namespace }} {{ include "httproute-controller.fullname" . }}
+  kubectl logs -n {{ .Release.Namespace }} -l {{ include "httproute-controller.selectorLabels" . | replace ": " "=" | replace "\n" "," }}
+
+For more information, visit: {{ .Chart.Home }}
