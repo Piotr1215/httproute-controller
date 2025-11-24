@@ -81,7 +81,7 @@ func (r *ServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		if controllerutil.ContainsFinalizer(svc, FinalizerHTTPRoute) {
 			// Our finalizer is present - clean up HTTPRoute
 			log.Info("Service being deleted, cleaning up HTTPRoute", "service", req.NamespacedName)
-			if _, err := r.cleanupResources(ctx, svc); err != nil {
+			if err := r.cleanupResources(ctx, svc); err != nil {
 				return ctrl.Result{}, err
 			}
 
@@ -99,9 +99,8 @@ func (r *ServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	expose := svc.Annotations[AnnotationExpose]
 	if expose != "true" {
 		// Service not marked for exposure - clean up if resources exist and remove finalizer
-		result, err := r.cleanupResources(ctx, svc)
-		if err != nil {
-			return result, err
+		if err := r.cleanupResources(ctx, svc); err != nil {
+			return ctrl.Result{}, err
 		}
 
 		// Remove finalizer if present
@@ -112,7 +111,7 @@ func (r *ServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 			}
 			log.Info("Finalizer removed (expose=false)", "service", req.NamespacedName)
 		}
-		return result, nil
+		return ctrl.Result{}, nil
 	}
 
 	// Validate required annotations
@@ -136,7 +135,7 @@ func (r *ServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	// Get service port
 	var port int32
 	if portStr := svc.Annotations[AnnotationPort]; portStr != "" {
-		fmt.Sscanf(portStr, "%d", &port)
+		_, _ = fmt.Sscanf(portStr, "%d", &port) // ignore error, fallback to first port if invalid
 	}
 	if port == 0 && len(svc.Spec.Ports) > 0 {
 		port = svc.Spec.Ports[0].Port
@@ -308,7 +307,7 @@ func (r *ServiceReconciler) reconcileReferenceGrant(ctx context.Context, svc *co
 
 // cleanupResources removes HTTPRoute and ReferenceGrant when Service is no longer exposed.
 // This handles the case where expose annotation is removed or changed to false.
-func (r *ServiceReconciler) cleanupResources(ctx context.Context, svc *corev1.Service) (ctrl.Result, error) {
+func (r *ServiceReconciler) cleanupResources(ctx context.Context, svc *corev1.Service) error {
 	log := log.FromContext(ctx)
 
 	// Get default gateway namespace
@@ -324,7 +323,7 @@ func (r *ServiceReconciler) cleanupResources(ctx context.Context, svc *corev1.Se
 	if err == nil {
 		// HTTPRoute exists, delete it
 		if err := r.Delete(ctx, route); err != nil && !errors.IsNotFound(err) {
-			return ctrl.Result{}, err
+			return err
 		}
 		log.Info("deleted HTTPRoute", "route", routeName)
 	}
@@ -336,12 +335,12 @@ func (r *ServiceReconciler) cleanupResources(ctx context.Context, svc *corev1.Se
 	if err == nil {
 		// ReferenceGrant exists, delete it
 		if err := r.Delete(ctx, grant); err != nil && !errors.IsNotFound(err) {
-			return ctrl.Result{}, err
+			return err
 		}
 		log.Info("deleted ReferenceGrant", "grant", grantName)
 	}
 
-	return ctrl.Result{}, nil
+	return nil
 }
 
 // SetupWithManager sets up the controller with the Manager.

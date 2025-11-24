@@ -123,7 +123,7 @@ spec:
    - Name: `default-myapp`
    - Hostname: `myapp.homelab.local`
    - Backend: Service `myapp` in namespace `default`
-   - OwnerReference to Service (for cleanup)
+   - Cleanup via Service finalizer (cross-namespace OwnerRefs not supported)
 
 2. **ReferenceGrant** (in service namespace):
    - Name: `myapp-backend`
@@ -133,6 +133,27 @@ spec:
 ## Installation
 
 ### Using Helm (Recommended)
+
+**From Helm repository:**
+
+```sh
+helm repo add httproute-controller https://piotr1215.github.io/httproute-controller
+helm repo update
+helm install httproute-controller httproute-controller/httproute-controller \
+  --namespace httproute-system \
+  --create-namespace
+```
+
+**From GitHub release:**
+
+```sh
+helm install httproute-controller \
+  https://github.com/Piotr1215/httproute-controller/releases/download/v0.1.0/httproute-controller-0.1.0.tgz \
+  --namespace httproute-system \
+  --create-namespace
+```
+
+**From source:**
 
 ```sh
 helm install httproute-controller ./helm/httproute-controller \
@@ -173,11 +194,26 @@ make test
 
 **Build and test in cluster:**
 ```sh
-# Build and push image
-make docker-build docker-push IMG=<your-registry>/httproute-controller:tag
+# Create KIND cluster
+kind create cluster --name httproute-test
 
-# Deploy to cluster
-make deploy IMG=<your-registry>/httproute-controller:tag
+# Install Gateway API CRDs
+kubectl apply -f config/crd/gateway-api/gateway-api-crds.yaml
+
+# Build image
+make docker-build IMG=httproute-controller:local
+
+# Load image to KIND
+kind load docker-image httproute-controller:local --name httproute-test
+
+# Deploy controller
+make deploy IMG=httproute-controller:local
+
+# Run integration tests
+make test-e2e
+
+# Cleanup
+kind delete cluster --name httproute-test
 ```
 
 **Uninstall:**
@@ -188,19 +224,24 @@ make uninstall
 
 ## Release
 
-### Build installer bundle
+Releases are automated via GitHub Actions. To create a new release:
 
 ```sh
-make build-installer IMG=ghcr.io/piotr1215/httproute-controller:v0.1.0
+git tag -a v0.2.0 -m "Release v0.2.0"
+git push origin v0.2.0
 ```
 
-Generates `dist/install.yaml` with all resources.
+The release pipeline automatically:
+1. Builds and pushes multi-platform Docker images to `ghcr.io/piotr1215/httproute-controller`
+2. Packages the Helm chart with correct version metadata
+3. Generates `install.yaml` bundle
+4. Creates GitHub release with artifacts
+5. Updates Helm repository index on GitHub Pages
 
-### Package Helm chart
-
-```sh
-helm package ./helm/httproute-controller -d dist/
-```
+**Release artifacts:**
+- Docker image: `ghcr.io/piotr1215/httproute-controller:<version>`
+- Helm chart: Available from GitHub releases and Helm repository
+- Install bundle: `dist/install.yaml`
 
 ## License
 

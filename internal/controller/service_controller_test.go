@@ -58,7 +58,7 @@ var _ = Describe("Service Controller", func() {
 			}
 
 			Expect(k8sClient.Create(ctx, svc)).Should(Succeed())
-			defer k8sClient.Delete(ctx, svc)
+			defer func() { _ = k8sClient.Delete(ctx, svc) }()
 
 			// ACT: Wait for potential reconciliation
 			time.Sleep(2 * time.Second)
@@ -107,7 +107,7 @@ var _ = Describe("Service Controller", func() {
 			}
 
 			Expect(k8sClient.Create(ctx, svc)).Should(Succeed())
-			defer k8sClient.Delete(ctx, svc)
+			defer func() { _ = k8sClient.Delete(ctx, svc) }()
 
 			// ACT: Wait for potential reconciliation
 			time.Sleep(2 * time.Second)
@@ -148,7 +148,7 @@ var _ = Describe("Service Controller", func() {
 			}
 
 			Expect(k8sClient.Create(ctx, svc)).Should(Succeed())
-			defer k8sClient.Delete(ctx, svc)
+			defer func() { _ = k8sClient.Delete(ctx, svc) }()
 
 			// ACT & ASSERT: HTTPRoute should be created
 			route := &gatewayv1.HTTPRoute{}
@@ -172,10 +172,9 @@ var _ = Describe("Service Controller", func() {
 			Expect(string(*backendRef.Namespace)).To(Equal("default"))
 			Expect(*backendRef.Port).To(Equal(gatewayv1.PortNumber(80)))
 
-			// ASSERT: Verify OwnerReference for garbage collection
-			Expect(route.OwnerReferences).To(HaveLen(1))
-			Expect(route.OwnerReferences[0].Kind).To(Equal("Service"))
-			Expect(route.OwnerReferences[0].Name).To(Equal("test-svc-exposed"))
+			// ASSERT: HTTPRoute should NOT have OwnerReferences (cross-namespace not supported)
+			// Cleanup is handled via finalizers on the Service
+			Expect(route.OwnerReferences).To(BeEmpty())
 
 			// ACT & ASSERT: ReferenceGrant should be created
 			grant := &gatewayv1beta1.ReferenceGrant{}
@@ -231,7 +230,7 @@ var _ = Describe("Service Controller", func() {
 			}
 
 			Expect(k8sClient.Create(ctx, svc)).Should(Succeed())
-			defer k8sClient.Delete(ctx, svc)
+			defer func() { _ = k8sClient.Delete(ctx, svc) }()
 
 			// ACT & ASSERT: HTTPRoute should be created in custom namespace
 			route := &gatewayv1.HTTPRoute{}
@@ -288,7 +287,7 @@ var _ = Describe("Service Controller", func() {
 			}
 
 			Expect(k8sClient.Create(ctx, svc)).Should(Succeed())
-			defer k8sClient.Delete(ctx, svc)
+			defer func() { _ = k8sClient.Delete(ctx, svc) }()
 
 			// Wait for initial HTTPRoute
 			routeKey := types.NamespacedName{
@@ -343,7 +342,7 @@ var _ = Describe("Service Controller", func() {
 			}
 
 			Expect(k8sClient.Create(ctx, svc)).Should(Succeed())
-			defer k8sClient.Delete(ctx, svc)
+			defer func() { _ = k8sClient.Delete(ctx, svc) }()
 
 			// Wait for resources to be created
 			routeKey := types.NamespacedName{
@@ -394,7 +393,7 @@ var _ = Describe("Service Controller", func() {
 			}
 
 			Expect(k8sClient.Create(ctx, svc)).Should(Succeed())
-			defer k8sClient.Delete(ctx, svc)
+			defer func() { _ = k8sClient.Delete(ctx, svc) }()
 
 			// ACT: Wait for potential reconciliation
 			time.Sleep(2 * time.Second)

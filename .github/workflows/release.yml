@@ -1,0 +1,145 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+  packages: write
+  pages: write
+  id-token: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=sha
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Install dependencies
+        run: |
+          make kustomize
+
+      - name: Build installer bundle
+        run: |
+          make build-installer IMG=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ github.ref_name }}
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'latest'
+
+      - name: Package Helm chart
+        run: |
+          # Update Chart.yaml version and appVersion
+          VERSION="${{ github.ref_name }}"
+          VERSION_NO_V="${VERSION#v}"
+
+          sed -i "s/^version: .*/version: ${VERSION_NO_V}/" helm/httproute-controller/Chart.yaml
+          sed -i "s/^appVersion: .*/appVersion: \"${VERSION}\"/" helm/httproute-controller/Chart.yaml
+
+          # Package the chart
+          helm package helm/httproute-controller -d dist/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tgz
+            dist/install.yaml
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+
+  publish-helm-repo:
+    needs: build-and-release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: 'latest'
+
+      - name: Download Helm chart
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p charts
+          # Download the chart from the release
+          gh release download ${{ github.ref_name }} -p '*.tgz' -D charts/
+
+      - name: Update Helm repository index
+        run: |
+          helm repo index charts --url https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/
+
+          # Merge with existing index if it exists
+          if [ -f index.yaml ]; then
+            helm repo index charts --url https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/ --merge index.yaml
+          fi
+
+          mv charts/index.yaml .
+
+      - name: Commit and push changes
+        run: |
+          git add index.yaml
+          git commit -m "Update Helm repository index for ${{ github.ref_name }}" || exit 0
+          git push origin gh-pages
