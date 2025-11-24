@@ -13,7 +13,7 @@ permissions:
 
 env:
   REGISTRY: docker.io
-  IMAGE_NAME: piotr1215/httproute-controller
+  IMAGE_NAME: piotrzan/httproute-controller
 
 jobs:
   build-and-release:
