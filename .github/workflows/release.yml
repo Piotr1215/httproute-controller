@@ -125,19 +125,19 @@ jobs:
       - name: Sign release artifacts
         run: |
           # Sign Helm chart
-          cosign sign-blob --yes dist/*.tgz > dist/helm-chart.sig
+          cosign sign-blob --yes dist/*.tgz > dist/httproute-controller-${GITHUB_REF_NAME#v}.tgz.sig
 
           # Sign install.yaml
           cosign sign-blob --yes dist/install.yaml > dist/install.yaml.sig
 
-          # Generate attestations
+          # Generate SLSA provenance attestations in intoto.jsonl format for OpenSSF Scorecard
           cosign attest-blob --yes --type slsaprovenance \
             --predicate <(echo '{"buildType":"https://github.com/Piotr1215/httproute-controller/.github/workflows/release.yml@'${{ github.ref }}'","builder":{"id":"https://github.com/actions/runner"},"invocation":{"configSource":{"uri":"'${{ github.server_url }}'/'${{ github.repository }}'","digest":{"sha1":"'${{ github.sha }}'"},"entryPoint":".github/workflows/release.yml"}}}') \
-            dist/*.tgz > dist/helm-chart.att
+            dist/*.tgz > dist/httproute-controller-${GITHUB_REF_NAME#v}.tgz.intoto.jsonl
 
           cosign attest-blob --yes --type slsaprovenance \
             --predicate <(echo '{"buildType":"https://github.com/Piotr1215/httproute-controller/.github/workflows/release.yml@'${{ github.ref }}'","builder":{"id":"https://github.com/actions/runner"},"invocation":{"configSource":{"uri":"'${{ github.server_url }}'/'${{ github.repository }}'","digest":{"sha1":"'${{ github.sha }}'"},"entryPoint":".github/workflows/release.yml"}}}') \
-            dist/install.yaml > dist/install.yaml.att
+            dist/install.yaml > dist/install.yaml.intoto.jsonl
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@da05d552573ad5aba039eaac05058a918a7bf631 # v2.2.2
@@ -145,7 +145,7 @@ jobs:
           files: |
             dist/*.tgz
             dist/*.sig
-            dist/*.att
+            dist/*.intoto.jsonl
             dist/install.yaml
           generate_release_notes: true
           draft: false
