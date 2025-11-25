@@ -1,5 +1,12 @@
 # HTTPRoute Controller
 
+[![Go Report Card](https://goreportcard.com/badge/github.com/Piotr1215/httproute-controller)](https://goreportcard.com/report/github.com/Piotr1215/httproute-controller)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Release](https://img.shields.io/github/v/release/Piotr1215/httproute-controller)](https://github.com/Piotr1215/httproute-controller/releases/latest)
+[![Docker Pulls](https://img.shields.io/docker/pulls/piotrzan/httproute-controller)](https://hub.docker.com/r/piotrzan/httproute-controller)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/Piotr1215/httproute-controller/badge)](https://scorecard.dev/viewer/?uri=github.com/Piotr1215/httproute-controller)
+[![SLSA 3](https://slsa.dev/images/gh-badge-level3.svg)](https://slsa.dev)
+
 Kubernetes controller that automatically generates Gateway API HTTPRoutes from Service annotations.
 
 ## Overview
@@ -243,6 +250,34 @@ The release pipeline automatically:
 - Docker image: `piotrzan/httproute-controller:<version>`
 - Helm chart: Available from GitHub releases and Helm repository
 - Install bundle: `dist/install.yaml`
+
+## Security
+
+### Image Verification
+
+All container images are signed with Cosign using keyless signing (GitHub OIDC).
+
+**Verify image signature:**
+```sh
+cosign verify \
+  --certificate-identity-regexp="https://github.com/Piotr1215/httproute-controller/.*" \
+  --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
+  piotrzan/httproute-controller:0.3.5
+```
+
+**View SBOM:**
+```sh
+docker scout sbom piotrzan/httproute-controller:0.3.5
+```
+
+**View provenance attestation:**
+```sh
+cosign verify-attestation \
+  --type slsaprovenance \
+  --certificate-identity-regexp="https://github.com/Piotr1215/httproute-controller/.*" \
+  --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
+  piotrzan/httproute-controller:0.3.5 | jq .
+```
 
 ## License
 
