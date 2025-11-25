@@ -93,3 +93,48 @@ jobs:
         if: always()
         with:
           sarif_file: 'gosec-results.sarif'
+
+  trivy-image:
+    name: Trivy Container Image Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435 # v3.11.1
+
+      - name: Build container image for scanning
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        with:
+          context: .
+          push: false
+          load: true
+          tags: httproute-controller:pr-${{ github.event.pull_request.number || github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Run Trivy vulnerability scanner (container image)
+        uses: aquasecurity/trivy-action@0.31.0
+        with:
+          scan-type: 'image'
+          image-ref: 'httproute-controller:pr-${{ github.event.pull_request.number || github.sha }}'
+          format: 'sarif'
+          output: 'trivy-image-results.sarif'
+          severity: 'CRITICAL,HIGH'
+
+      - name: Upload Trivy image scan results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: 'trivy-image-results.sarif'
+
+      - name: Run Trivy vulnerability scanner (PR comment)
+        uses: aquasecurity/trivy-action@0.31.0
+        if: github.event_name == 'pull_request'
+        with:
+          scan-type: 'image'
+          image-ref: 'httproute-controller:pr-${{ github.event.pull_request.number || github.sha }}'
+          format: 'table'
+          severity: 'CRITICAL,HIGH'
