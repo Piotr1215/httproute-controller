@@ -5,9 +5,8 @@ run:
   allow-parallel-runners: true
 
 linters:
-  default: none
+  disable-all: true
   enable:
-    - dupl
     - errcheck
     - copyloopvar
     - ginkgolinter
@@ -18,27 +17,19 @@ linters:
     - misspell
     - nakedret
     - prealloc
-    - revive
     - staticcheck
     - unconvert
     - unparam
     - unused
-  settings:
-    revive:
-      rules:
-        - name: comment-spacings
-  exclusions:
-    rules:
-      - path: "api/*"
-        linters:
-          - lll
-      - path: "internal/*"
-        linters:
-          - dupl
-          - lll
-    generated: lax
 
-formatters:
-  enable:
-    - gofmt
-    - goimports
+linters-settings:
+  lll:
+    line-length: 120
+    tab-width: 1
+
+issues:
+  exclude-rules:
+    - path: "api/"
+      linters:
+        - lll
+  exclude-generated: lax
