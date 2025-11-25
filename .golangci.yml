@@ -7,7 +7,6 @@ run:
 linters:
   default: none
   enable:
-    - dupl
     - errcheck
     - copyloopvar
     - ginkgolinter
@@ -18,23 +17,18 @@ linters:
     - misspell
     - nakedret
     - prealloc
-    - revive
     - staticcheck
     - unconvert
     - unparam
     - unused
   settings:
-    revive:
-      rules:
-        - name: comment-spacings
+    lll:
+      line-length: 120
+      tab-width: 1
   exclusions:
     rules:
-      - path: "api/*"
+      - path: "api/"
         linters:
-          - lll
-      - path: "internal/*"
-        linters:
-          - dupl
           - lll
     generated: lax
 

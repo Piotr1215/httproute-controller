@@ -50,7 +50,9 @@ type ServiceReconciler struct {
 }
 
 // +kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;update;patch
+//nolint:lll
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=httproutes,verbs=get;list;watch;create;update;patch;delete
+//nolint:lll
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=referencegrants,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile implements the reconciliation loop for Service resources.
@@ -175,7 +177,10 @@ func (r *ServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 // Does NOT use OwnerReferences (cross-namespace not supported by Kubernetes).
 // Cleanup is handled via finalizers on the Service.
 // This is idempotent - safe to call multiple times with same inputs.
-func (r *ServiceReconciler) reconcileHTTPRoute(ctx context.Context, svc *corev1.Service, hostname, gatewayName, gatewayNamespace string, port int32) error {
+func (r *ServiceReconciler) reconcileHTTPRoute(
+	ctx context.Context, svc *corev1.Service,
+	hostname, gatewayName, gatewayNamespace string, port int32,
+) error {
 	routeName := fmt.Sprintf("%s-%s", svc.Namespace, svc.Name)
 	sectionName := gatewayv1.SectionName("https")
 
@@ -258,7 +263,9 @@ func (r *ServiceReconciler) reconcileHTTPRoute(ctx context.Context, svc *corev1.
 // ReferenceGrant allows HTTPRoute in gateway namespace to reference Service in service namespace.
 // Uses controllerutil.SetControllerReference for proper ownership and garbage collection.
 // This is idempotent - safe to call multiple times with same inputs.
-func (r *ServiceReconciler) reconcileReferenceGrant(ctx context.Context, svc *corev1.Service, gatewayNamespace string) error {
+func (r *ServiceReconciler) reconcileReferenceGrant(
+	ctx context.Context, svc *corev1.Service, gatewayNamespace string,
+) error {
 	grantName := fmt.Sprintf("%s-backend", svc.Name)
 
 	grant := &gatewayv1beta1.ReferenceGrant{
