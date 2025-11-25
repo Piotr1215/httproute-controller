@@ -122,11 +122,30 @@ jobs:
           # Package the chart
           helm package helm/httproute-controller -d dist/
 
+      - name: Sign release artifacts
+        run: |
+          # Sign Helm chart
+          cosign sign-blob --yes dist/*.tgz > dist/helm-chart.sig
+
+          # Sign install.yaml
+          cosign sign-blob --yes dist/install.yaml > dist/install.yaml.sig
+
+          # Generate attestations
+          cosign attest-blob --yes --type slsaprovenance \
+            --predicate <(echo '{"buildType":"https://github.com/Piotr1215/httproute-controller/.github/workflows/release.yml@'${{ github.ref }}'","builder":{"id":"https://github.com/actions/runner"},"invocation":{"configSource":{"uri":"'${{ github.server_url }}'/'${{ github.repository }}'","digest":{"sha1":"'${{ github.sha }}'"},"entryPoint":".github/workflows/release.yml"}}}') \
+            dist/*.tgz > dist/helm-chart.att
+
+          cosign attest-blob --yes --type slsaprovenance \
+            --predicate <(echo '{"buildType":"https://github.com/Piotr1215/httproute-controller/.github/workflows/release.yml@'${{ github.ref }}'","builder":{"id":"https://github.com/actions/runner"},"invocation":{"configSource":{"uri":"'${{ github.server_url }}'/'${{ github.repository }}'","digest":{"sha1":"'${{ github.sha }}'"},"entryPoint":".github/workflows/release.yml"}}}') \
+            dist/install.yaml > dist/install.yaml.att
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@da05d552573ad5aba039eaac05058a918a7bf631 # v2.2.2
         with:
           files: |
             dist/*.tgz
+            dist/*.sig
+            dist/*.att
             dist/install.yaml
           generate_release_notes: true
           draft: false

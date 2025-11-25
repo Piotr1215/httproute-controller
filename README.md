@@ -279,6 +279,39 @@ cosign verify-attestation \
   piotrzan/httproute-controller:0.3.5 | jq .
 ```
 
+### Release Artifact Verification
+
+GitHub release artifacts (Helm charts, install.yaml) are also signed with Cosign.
+
+**Verify Helm chart signature:**
+```sh
+# Download release artifacts
+VERSION=v0.3.5
+wget https://github.com/Piotr1215/httproute-controller/releases/download/${VERSION}/httproute-controller-${VERSION#v}.tgz
+wget https://github.com/Piotr1215/httproute-controller/releases/download/${VERSION}/helm-chart.sig
+
+# Verify signature
+cosign verify-blob \
+  --certificate-identity-regexp="https://github.com/Piotr1215/httproute-controller/.*" \
+  --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
+  --signature helm-chart.sig \
+  httproute-controller-${VERSION#v}.tgz
+```
+
+**Verify install.yaml signature:**
+```sh
+# Download artifacts
+wget https://github.com/Piotr1215/httproute-controller/releases/download/${VERSION}/install.yaml
+wget https://github.com/Piotr1215/httproute-controller/releases/download/${VERSION}/install.yaml.sig
+
+# Verify signature
+cosign verify-blob \
+  --certificate-identity-regexp="https://github.com/Piotr1215/httproute-controller/.*" \
+  --certificate-oidc-issuer="https://token.actions.githubusercontent.com" \
+  --signature install.yaml.sig \
+  install.yaml
+```
+
 ## License
 
 MIT License - see [LICENSE](LICENSE) file for details.
