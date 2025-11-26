@@ -34,19 +34,33 @@ import (
 	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 )
 
+// Fixed annotation prefix - not configurable
 const (
-	AnnotationExpose           = "gateway.homelab.local/expose"
-	AnnotationHostname         = "gateway.homelab.local/hostname"
-	AnnotationGateway          = "gateway.homelab.local/gateway"
-	AnnotationGatewayNamespace = "gateway.homelab.local/gateway-namespace"
-	AnnotationPort             = "gateway.homelab.local/port"
-	FinalizerHTTPRoute         = "gateway.homelab.local/httproute-finalizer"
+	AnnotationPrefix           = "httproute.controller"
+	AnnotationExpose           = AnnotationPrefix + "/expose"
+	AnnotationHostname         = AnnotationPrefix + "/hostname"
+	AnnotationGateway          = AnnotationPrefix + "/gateway"
+	AnnotationGatewayNamespace = AnnotationPrefix + "/gateway-namespace"
+	AnnotationSectionName      = AnnotationPrefix + "/section-name"
+	AnnotationPort             = AnnotationPrefix + "/port"
+	FinalizerHTTPRoute         = AnnotationPrefix + "/httproute-finalizer"
 )
+
+// Config holds the controller configuration (required values, no defaults)
+type Config struct {
+	// DefaultGateway is the default gateway name (REQUIRED)
+	DefaultGateway string
+	// DefaultGatewayNamespace is the default gateway namespace (REQUIRED)
+	DefaultGatewayNamespace string
+	// DefaultSectionName is the default gateway listener section name
+	DefaultSectionName string
+}
 
 // ServiceReconciler reconciles a Service object
 type ServiceReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+	Config Config
 }
 
 // +kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;update;patch
@@ -124,15 +138,21 @@ func (r *ServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, nil // Don't requeue - invalid configuration
 	}
 
-	// Get gateway configuration (with defaults)
+	// Get gateway configuration (with defaults from controller config)
 	gatewayName := svc.Annotations[AnnotationGateway]
 	if gatewayName == "" {
-		gatewayName = "homelab-gateway"
+		gatewayName = r.Config.DefaultGateway
 	}
 
 	gatewayNamespace := svc.Annotations[AnnotationGatewayNamespace]
 	if gatewayNamespace == "" {
-		gatewayNamespace = "envoy-gateway-system"
+		gatewayNamespace = r.Config.DefaultGatewayNamespace
+	}
+
+	// Get section name (with default)
+	sectionName := svc.Annotations[AnnotationSectionName]
+	if sectionName == "" {
+		sectionName = r.Config.DefaultSectionName
 	}
 
 	// Get service port
@@ -149,7 +169,7 @@ func (r *ServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 
 	// Create/Update HTTPRoute
-	if err := r.reconcileHTTPRoute(ctx, svc, hostname, gatewayName, gatewayNamespace, port); err != nil {
+	if err := r.reconcileHTTPRoute(ctx, svc, hostname, gatewayName, gatewayNamespace, sectionName, port); err != nil {
 		log.Error(err, "failed to reconcile HTTPRoute")
 		return ctrl.Result{}, err
 	}
@@ -179,10 +199,10 @@ func (r *ServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 // This is idempotent - safe to call multiple times with same inputs.
 func (r *ServiceReconciler) reconcileHTTPRoute(
 	ctx context.Context, svc *corev1.Service,
-	hostname, gatewayName, gatewayNamespace string, port int32,
+	hostname, gatewayName, gatewayNamespace, sectionNameStr string, port int32,
 ) error {
 	routeName := fmt.Sprintf("%s-%s", svc.Namespace, svc.Name)
-	sectionName := gatewayv1.SectionName("https")
+	sectionName := gatewayv1.SectionName(sectionNameStr)
 
 	route := &gatewayv1.HTTPRoute{
 		ObjectMeta: metav1.ObjectMeta{
@@ -318,10 +338,10 @@ func (r *ServiceReconciler) reconcileReferenceGrant(
 func (r *ServiceReconciler) cleanupResources(ctx context.Context, svc *corev1.Service) error {
 	log := log.FromContext(ctx)
 
-	// Get default gateway namespace
+	// Get gateway namespace from annotation or default
 	gatewayNamespace := svc.Annotations[AnnotationGatewayNamespace]
 	if gatewayNamespace == "" {
-		gatewayNamespace = "envoy-gateway-system"
+		gatewayNamespace = r.Config.DefaultGatewayNamespace
 	}
 
 	// Try to delete HTTPRoute

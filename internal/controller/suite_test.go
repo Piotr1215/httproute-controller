@@ -113,9 +113,17 @@ var _ = BeforeSuite(func() {
 	})
 	Expect(err).ToNot(HaveOccurred())
 
+	// Test configuration - uses fixed annotation prefix httproute.controller
+	testConfig := Config{
+		DefaultGateway:          "test-gateway",
+		DefaultGatewayNamespace: "envoy-gateway-system",
+		DefaultSectionName:      "https",
+	}
+
 	err = (&ServiceReconciler{
 		Client: k8sManager.GetClient(),
 		Scheme: k8sManager.GetScheme(),
+		Config: testConfig,
 	}).SetupWithManager(k8sManager)
 	Expect(err).ToNot(HaveOccurred())
 

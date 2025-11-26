@@ -41,6 +41,15 @@ leaderElection:
 healthProbe:
   port: 8081
 
+# Controller configuration (REQUIRED - no defaults for gateway)
+controller:
+  # REQUIRED: Default gateway name when not specified in Service annotations
+  defaultGateway: ""
+  # REQUIRED: Default gateway namespace when not specified in Service annotations
+  defaultGatewayNamespace: ""
+  # Default gateway listener section name (default: 'https')
+  defaultSectionName: "https"
+
 metrics:
   enabled: true
   port: 8443

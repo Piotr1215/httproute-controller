@@ -20,7 +20,7 @@ Convenience controller for creating HTTPRoutes. Watches Services with specific a
 
 ## Architecture
 
-**Controller Name:** `homelab.local/httproute-controller`
+**Controller Name:** `httproute.controller/service-controller`
 
 **Reconciliation:**
 - Level-based triggers (reconciles full state)
@@ -31,13 +31,19 @@ Convenience controller for creating HTTPRoutes. Watches Services with specific a
 **Constraints:**
 - HTTPRoute must be in gateway namespace (Kubernetes blocks cross-namespace OwnerReferences)
 - ReferenceGrant must be in service namespace
-- HTTPS only (targets gateway `https` section)
+- Targets single gateway listener section (default: `https`)
 - Single service per HTTPRoute (no aggregation)
+
+**Gateway API Compatibility:**
+- Works with any [Gateway API](https://gateway-api.sigs.k8s.io/) compliant implementation
+- Tested with: Envoy Gateway
+- Should work with: Istio, Kong Gateway, Contour, NGINX Gateway Fabric, Traefik, and others
+- Requires Gateway API CRDs v1.0+ (HTTPRoute v1, ReferenceGrant v1beta1)
 
 ## Features
 
 **Annotation-driven automation:**
-- Watches Services with `gateway.homelab.local/expose: "true"`
+- Watches Services with `httproute.controller/expose: "true"` (configurable prefix)
 - Auto-generates HTTPRoute + ReferenceGrant from annotations
 - No manual resource creation required
 
@@ -54,10 +60,10 @@ Convenience controller for creating HTTPRoutes. Watches Services with specific a
 - Idempotent reconciliation (safe to run multiple times)
 
 **Configuration:**
-- Gateway name/namespace configurable per Service
-- Defaults: `homelab-gateway` in `envoy-gateway-system`
+- Gateway name/namespace configurable per Service via annotations
+- Defaults: `main-gateway` in `gateway-system` (configurable via CLI flags)
 - Port selection: explicit annotation or first Service port
-- HTTPS-only (targets gateway's `https` section)
+- Listener section: configurable (default: `https`)
 
 ### Controller Lifecycle
 
@@ -74,7 +80,7 @@ sequenceDiagram
 
     Controller->>Controller: Validate annotations
     Controller->>GatewayNS: Create/Update HTTPRoute
-    Note over GatewayNS: HTTPRoute: myapp.homelab.local<br/>Backend: Service in app namespace
+    Note over GatewayNS: HTTPRoute: myapp.example.com<br/>Backend: Service in app namespace
 
     Controller->>ServiceNS: Create/Update ReferenceGrant
     Note over ServiceNS: Allows HTTPRoute to reference Service
@@ -97,13 +103,16 @@ sequenceDiagram
 
 ### Annotations
 
+All annotations use the fixed prefix `httproute.controller`.
+
 | Annotation | Required | Default | Description |
 |------------|----------|---------|-------------|
-| `gateway.homelab.local/expose` | Yes | - | Set to `"true"` to enable |
-| `gateway.homelab.local/hostname` | Yes | - | DNS hostname (e.g., `myapp.homelab.local`) |
-| `gateway.homelab.local/gateway` | No | `homelab-gateway` | Gateway name |
-| `gateway.homelab.local/gateway-namespace` | No | `envoy-gateway-system` | Gateway namespace |
-| `gateway.homelab.local/port` | No | First port | Service port |
+| `httproute.controller/expose` | Yes | - | Set to `"true"` to enable |
+| `httproute.controller/hostname` | Yes | - | DNS hostname (e.g., `myapp.example.com`) |
+| `httproute.controller/gateway` | No | From controller flag | Gateway name override |
+| `httproute.controller/gateway-namespace` | No | From controller flag | Gateway namespace override |
+| `httproute.controller/section-name` | No | `https` | Gateway listener section override |
+| `httproute.controller/port` | No | First port | Service port |
 
 ### Example
 
@@ -114,8 +123,8 @@ metadata:
   name: myapp
   namespace: default
   annotations:
-    gateway.homelab.local/expose: "true"
-    gateway.homelab.local/hostname: "myapp.homelab.local"
+    httproute.controller/expose: "true"
+    httproute.controller/hostname: "myapp.example.com"
 spec:
   selector:
     app: myapp
@@ -128,7 +137,7 @@ spec:
 
 1. **HTTPRoute** (in gateway namespace):
    - Name: `default-myapp`
-   - Hostname: `myapp.homelab.local`
+   - Hostname: `myapp.example.com`
    - Backend: Service `myapp` in namespace `default`
    - Cleanup via Service finalizer (cross-namespace OwnerRefs not supported)
 
@@ -136,6 +145,18 @@ spec:
    - Name: `myapp-backend`
    - Allows HTTPRoute from gateway namespace to reference Service
    - OwnerReference to Service (automatic garbage collection)
+
+### Controller Configuration
+
+The controller requires gateway configuration at startup:
+
+| Flag | Helm Value | Required | Description |
+|------|------------|----------|-------------|
+| `--default-gateway` | `controller.defaultGateway` | **Yes** | Default gateway name |
+| `--default-gateway-namespace` | `controller.defaultGatewayNamespace` | **Yes** | Default gateway namespace |
+| `--default-section-name` | `controller.defaultSectionName` | No (default: `https`) | Gateway listener section |
+
+**Note:** Annotation prefix is fixed to `httproute.controller` and not configurable.
 
 ## Installation
 
@@ -148,8 +169,12 @@ helm repo add httproute-controller https://piotr1215.github.io/httproute-control
 helm repo update
 helm install httproute-controller httproute-controller/httproute-controller \
   --namespace httproute-system \
-  --create-namespace
+  --create-namespace \
+  --set controller.defaultGateway="my-gateway" \
+  --set controller.defaultGatewayNamespace="envoy-gateway-system"
 ```
+
+**Required:** You must set `controller.defaultGateway` and `controller.defaultGatewayNamespace`.
 
 **From GitHub release:**
 

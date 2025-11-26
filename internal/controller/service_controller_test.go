@@ -93,7 +93,7 @@ var _ = Describe("Service Controller", func() {
 					Name:      "test-svc-expose-false",
 					Namespace: "default",
 					Annotations: map[string]string{
-						"gateway.homelab.local/expose": "false",
+						"httproute.controller/expose": "false",
 					},
 				},
 				Spec: corev1.ServiceSpec{
@@ -133,8 +133,8 @@ var _ = Describe("Service Controller", func() {
 					Name:      "test-svc-exposed",
 					Namespace: "default",
 					Annotations: map[string]string{
-						"gateway.homelab.local/expose":   "true",
-						"gateway.homelab.local/hostname": "test.homelab.local",
+						"httproute.controller/expose":   "true",
+						"httproute.controller/hostname": "test.homelab.local",
 					},
 				},
 				Spec: corev1.ServiceSpec{
@@ -164,7 +164,7 @@ var _ = Describe("Service Controller", func() {
 			// ASSERT: Verify HTTPRoute content
 			Expect(route.Spec.Hostnames).To(ContainElement(gatewayv1.Hostname("test.homelab.local")))
 			Expect(route.Spec.ParentRefs).To(HaveLen(1))
-			Expect(string(route.Spec.ParentRefs[0].Name)).To(Equal("homelab-gateway"))
+			Expect(string(route.Spec.ParentRefs[0].Name)).To(Equal("test-gateway"))
 			Expect(route.Spec.Rules).To(HaveLen(1))
 			Expect(route.Spec.Rules[0].BackendRefs).To(HaveLen(1))
 			backendRef := route.Spec.Rules[0].BackendRefs[0]
@@ -213,10 +213,10 @@ var _ = Describe("Service Controller", func() {
 					Name:      "test-svc-custom-gw",
 					Namespace: "default",
 					Annotations: map[string]string{
-						"gateway.homelab.local/expose":            "true",
-						"gateway.homelab.local/hostname":          "custom.homelab.local",
-						"gateway.homelab.local/gateway":           "custom-gateway",
-						"gateway.homelab.local/gateway-namespace": "custom-ns",
+						"httproute.controller/expose":            "true",
+						"httproute.controller/hostname":          "custom.homelab.local",
+						"httproute.controller/gateway":           "custom-gateway",
+						"httproute.controller/gateway-namespace": "custom-ns",
 					},
 				},
 				Spec: corev1.ServiceSpec{
@@ -272,8 +272,8 @@ var _ = Describe("Service Controller", func() {
 					Name:      "test-svc-update",
 					Namespace: "default",
 					Annotations: map[string]string{
-						"gateway.homelab.local/expose":   "true",
-						"gateway.homelab.local/hostname": "original.homelab.local",
+						"httproute.controller/expose":   "true",
+						"httproute.controller/hostname": "original.homelab.local",
 					},
 				},
 				Spec: corev1.ServiceSpec{
@@ -302,7 +302,7 @@ var _ = Describe("Service Controller", func() {
 
 			// ACT: Update hostname annotation
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: svc.Name, Namespace: svc.Namespace}, svc)).Should(Succeed())
-			svc.Annotations["gateway.homelab.local/hostname"] = "updated.homelab.local"
+			svc.Annotations["httproute.controller/hostname"] = "updated.homelab.local"
 			Expect(k8sClient.Update(ctx, svc)).Should(Succeed())
 
 			// ASSERT: HTTPRoute should be updated with new hostname
@@ -327,8 +327,8 @@ var _ = Describe("Service Controller", func() {
 					Name:      "test-svc-remove-expose",
 					Namespace: "default",
 					Annotations: map[string]string{
-						"gateway.homelab.local/expose":   "true",
-						"gateway.homelab.local/hostname": "remove.homelab.local",
+						"httproute.controller/expose":   "true",
+						"httproute.controller/hostname": "remove.homelab.local",
 					},
 				},
 				Spec: corev1.ServiceSpec{
@@ -357,7 +357,7 @@ var _ = Describe("Service Controller", func() {
 
 			// ACT: Remove expose annotation
 			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: svc.Name, Namespace: svc.Namespace}, svc)).Should(Succeed())
-			delete(svc.Annotations, "gateway.homelab.local/expose")
+			delete(svc.Annotations, "httproute.controller/expose")
 			Expect(k8sClient.Update(ctx, svc)).Should(Succeed())
 
 			// ASSERT: HTTPRoute should be deleted (by controller removing it or by garbage collection)
@@ -378,7 +378,7 @@ var _ = Describe("Service Controller", func() {
 					Name:      "test-svc-no-hostname",
 					Namespace: "default",
 					Annotations: map[string]string{
-						"gateway.homelab.local/expose": "true",
+						"httproute.controller/expose": "true",
 						// hostname annotation missing
 					},
 				},
@@ -422,8 +422,8 @@ var _ = Describe("Service Controller", func() {
 					Name:      "test-svc-delete",
 					Namespace: "default",
 					Annotations: map[string]string{
-						"gateway.homelab.local/expose":   "true",
-						"gateway.homelab.local/hostname": "delete.homelab.local",
+						"httproute.controller/expose":   "true",
+						"httproute.controller/hostname": "delete.homelab.local",
 					},
 				},
 				Spec: corev1.ServiceSpec{
