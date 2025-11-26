@@ -2,8 +2,8 @@ apiVersion: v2
 name: httproute-controller
 description: Kubernetes controller that automatically generates Gateway API HTTPRoutes from Service annotations
 type: application
-version: 0.1.0
-appVersion: "latest"
+version: 0.3.7
+appVersion: "v0.3.7"
 keywords:
   - kubernetes
   - gateway-api
