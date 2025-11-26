@@ -104,6 +104,11 @@ lint-fix: golangci-lint ## Run golangci-lint linter and perform fixes
 lint-config: golangci-lint ## Verify golangci-lint linter configuration
 	$(GOLANGCI_LINT) config verify
 
+.PHONY: install-hooks
+install-hooks: ## Install git pre-commit hooks
+	@git config core.hooksPath .git/hooks
+	@echo "Git hooks installed (using .git/hooks)"
+
 ##@ Build
 
 .PHONY: build

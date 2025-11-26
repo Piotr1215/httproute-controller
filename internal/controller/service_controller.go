@@ -178,7 +178,8 @@ func (r *ServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		r.recordEvent(svc, corev1.EventTypeWarning, "HTTPRouteFailed", fmt.Sprintf("Failed to reconcile HTTPRoute: %v", err))
 		return ctrl.Result{}, err
 	}
-	r.recordEvent(svc, corev1.EventTypeNormal, "HTTPRouteReconciled", fmt.Sprintf("HTTPRoute %s-%s reconciled in namespace %s", svc.Namespace, svc.Name, gatewayNamespace))
+	r.recordEvent(svc, corev1.EventTypeNormal, "HTTPRouteReconciled",
+		fmt.Sprintf("HTTPRoute %s-%s reconciled in namespace %s", svc.Namespace, svc.Name, gatewayNamespace))
 
 	// Check if ReferenceGrant creation should be skipped
 	skipReferenceGrant := svc.Annotations[AnnotationSkipReferenceGrant] == "true"
@@ -192,11 +193,13 @@ func (r *ServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		// Create/Update ReferenceGrant
 		if err := r.reconcileReferenceGrant(ctx, svc, gatewayNamespace); err != nil {
 			log.Error(err, "failed to reconcile ReferenceGrant")
-			r.recordEvent(svc, corev1.EventTypeWarning, "ReferenceGrantFailed", fmt.Sprintf("Failed to reconcile ReferenceGrant: %v", err))
+			r.recordEvent(svc, corev1.EventTypeWarning, "ReferenceGrantFailed",
+				fmt.Sprintf("Failed to reconcile ReferenceGrant: %v", err))
 			return ctrl.Result{}, err
 		}
-		r.recordEvent(svc, corev1.EventTypeNormal, "ReferenceGrantReconciled",
-			fmt.Sprintf("ReferenceGrant %s-backend reconciled, allowing HTTPRoute from %s to access this Service", svc.Name, gatewayNamespace))
+		msg := fmt.Sprintf("ReferenceGrant %s-backend reconciled, allowing HTTPRoute from %s",
+			svc.Name, gatewayNamespace)
+		r.recordEvent(svc, corev1.EventTypeNormal, "ReferenceGrantReconciled", msg)
 	}
 
 	// Add finalizer if not present (ensures cleanup when Service is deleted)
