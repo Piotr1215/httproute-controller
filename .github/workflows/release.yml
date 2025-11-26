@@ -139,6 +139,31 @@ jobs:
             --predicate <(echo '{"buildType":"https://github.com/Piotr1215/httproute-controller/.github/workflows/release.yml@'${{ github.ref }}'","builder":{"id":"https://github.com/actions/runner"},"invocation":{"configSource":{"uri":"'${{ github.server_url }}'/'${{ github.repository }}'","digest":{"sha1":"'${{ github.sha }}'"},"entryPoint":".github/workflows/release.yml"}}}') \
             dist/install.yaml > dist/install.yaml.intoto.jsonl
 
+      - name: Extract changelog for this version
+        id: changelog
+        run: |
+          VERSION="${{ github.ref_name }}"
+          VERSION_NO_V="${VERSION#v}"
+
+          # Extract the section for this version from CHANGELOG.md
+          # Looks for ## [x.y.z] and captures until next ## [
+          if [ -f CHANGELOG.md ]; then
+            NOTES=$(awk "/^## \[${VERSION_NO_V}\]/{flag=1; next} /^## \[/{flag=0} flag" CHANGELOG.md)
+            if [ -n "$NOTES" ]; then
+              echo "Found changelog notes for version ${VERSION_NO_V}"
+              # Use heredoc for multiline output
+              {
+                echo "notes<<EOF"
+                echo "$NOTES"
+                echo "EOF"
+              } >> $GITHUB_OUTPUT
+            else
+              echo "notes=" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "notes=" >> $GITHUB_OUTPUT
+          fi
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@da05d552573ad5aba039eaac05058a918a7bf631 # v2.2.2
         with:
@@ -147,6 +172,7 @@ jobs:
             dist/*.sig
             dist/*.intoto.jsonl
             dist/install.yaml
+          body: ${{ steps.changelog.outputs.notes }}
           generate_release_notes: true
           draft: false
           prerelease: false
