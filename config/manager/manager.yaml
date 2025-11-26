@@ -63,6 +63,9 @@ spec:
         args:
           - --leader-elect
           - --health-probe-bind-address=:8081
+          - --default-gateway=test-gateway
+          - --default-gateway-namespace=gateway-system
+          - --default-section-name=https
         image: controller:latest
         name: manager
         ports: []

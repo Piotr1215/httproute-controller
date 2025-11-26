@@ -257,15 +257,148 @@ var _ = Describe("Manager", Ordered, func() {
 		})
 
 		// +kubebuilder:scaffold:e2e-webhooks-checks
+	})
 
-		// TODO: Customize the e2e test suite with scenarios specific to your project.
-		// Consider applying sample/CR(s) and check their status and/or verifying
-		// the reconciliation by using the metrics, i.e.:
-		// metricsOutput := getMetricsOutput()
-		// Expect(metricsOutput).To(ContainSubstring(
-		//    fmt.Sprintf(`controller_runtime_reconcile_total{controller="%s",result="success"} 1`,
-		//    strings.ToLower(<Kind>),
-		// ))
+	Context("HTTPRoute Controller", func() {
+		const (
+			gatewayNamespace = "gateway-system"
+			testServiceName  = "test-e2e-svc"
+			testNamespace    = "default"
+		)
+
+		BeforeAll(func() {
+			By("creating gateway namespace")
+			cmd := exec.Command("kubectl", "create", "ns", gatewayNamespace, "--dry-run=client", "-o", "yaml")
+			output, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			cmd = exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = utils.NewStringReader(output)
+			_, err = utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+		})
+
+		AfterAll(func() {
+			By("cleaning up test resources")
+			cmd := exec.Command("kubectl", "delete", "svc", testServiceName, "-n", testNamespace, "--ignore-not-found")
+			_, _ = utils.Run(cmd)
+
+			cmd = exec.Command("kubectl", "delete", "ns", gatewayNamespace, "--ignore-not-found")
+			_, _ = utils.Run(cmd)
+		})
+
+		It("should create HTTPRoute and ReferenceGrant for annotated Service", func() {
+			By("creating a Service with httproute.controller annotations")
+			serviceYAML := fmt.Sprintf(`
+apiVersion: v1
+kind: Service
+metadata:
+  name: %s
+  namespace: %s
+  annotations:
+    httproute.controller/expose: "true"
+    httproute.controller/hostname: "test-e2e.example.com"
+spec:
+  selector:
+    app: test-e2e
+  ports:
+  - port: 80
+    targetPort: 8080
+`, testServiceName, testNamespace)
+
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = utils.NewStringReader(serviceYAML)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("verifying HTTPRoute is created in gateway namespace")
+			verifyHTTPRoute := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "httproute",
+					fmt.Sprintf("%s-%s", testNamespace, testServiceName),
+					"-n", gatewayNamespace,
+					"-o", "jsonpath={.spec.hostnames[0]}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("test-e2e.example.com"))
+			}
+			Eventually(verifyHTTPRoute, 30*time.Second, time.Second).Should(Succeed())
+
+			By("verifying ReferenceGrant is created in service namespace")
+			verifyReferenceGrant := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "referencegrant",
+					fmt.Sprintf("%s-backend", testServiceName),
+					"-n", testNamespace)
+				_, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+			}
+			Eventually(verifyReferenceGrant, 30*time.Second, time.Second).Should(Succeed())
+
+			By("verifying finalizer is added to Service")
+			cmd = exec.Command("kubectl", "get", "svc", testServiceName, "-n", testNamespace,
+				"-o", "jsonpath={.metadata.finalizers}")
+			output, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(output).To(ContainSubstring("httproute.controller/httproute-finalizer"))
+		})
+
+		It("should cleanup HTTPRoute when Service is deleted", func() {
+			By("deleting the test Service")
+			cmd := exec.Command("kubectl", "delete", "svc", testServiceName, "-n", testNamespace)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("verifying HTTPRoute is deleted")
+			verifyHTTPRouteDeleted := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "httproute",
+					fmt.Sprintf("%s-%s", testNamespace, testServiceName),
+					"-n", gatewayNamespace)
+				_, err := utils.Run(cmd)
+				g.Expect(err).To(HaveOccurred()) // Should error because not found
+			}
+			Eventually(verifyHTTPRouteDeleted, 30*time.Second, time.Second).Should(Succeed())
+		})
+
+		It("should use section-name annotation override", func() {
+			By("creating a Service with section-name override")
+			serviceYAML := fmt.Sprintf(`
+apiVersion: v1
+kind: Service
+metadata:
+  name: %s-section
+  namespace: %s
+  annotations:
+    httproute.controller/expose: "true"
+    httproute.controller/hostname: "section-test.example.com"
+    httproute.controller/section-name: "http"
+spec:
+  selector:
+    app: test-e2e
+  ports:
+  - port: 80
+    targetPort: 8080
+`, testServiceName, testNamespace)
+
+			cmd := exec.Command("kubectl", "apply", "-f", "-")
+			cmd.Stdin = utils.NewStringReader(serviceYAML)
+			_, err := utils.Run(cmd)
+			Expect(err).NotTo(HaveOccurred())
+
+			By("verifying HTTPRoute uses custom section name")
+			verifySectionName := func(g Gomega) {
+				cmd := exec.Command("kubectl", "get", "httproute",
+					fmt.Sprintf("%s-%s-section", testNamespace, testServiceName),
+					"-n", gatewayNamespace,
+					"-o", "jsonpath={.spec.parentRefs[0].sectionName}")
+				output, err := utils.Run(cmd)
+				g.Expect(err).NotTo(HaveOccurred())
+				g.Expect(output).To(Equal("http"))
+			}
+			Eventually(verifySectionName, 30*time.Second, time.Second).Should(Succeed())
+
+			By("cleaning up section test service")
+			cmd = exec.Command("kubectl", "delete", "svc", fmt.Sprintf("%s-section", testServiceName), "-n", testNamespace)
+			_, _ = utils.Run(cmd)
+		})
 	})
 })
 

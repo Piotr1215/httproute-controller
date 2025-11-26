@@ -409,6 +409,57 @@ var _ = Describe("Service Controller", func() {
 		})
 	})
 
+	Context("When Service has skip-reference-grant annotation", func() {
+		It("should create HTTPRoute but NOT ReferenceGrant", func() {
+			ctx := context.Background()
+
+			// ARRANGE: Create service with skip-reference-grant=true
+			svc := &corev1.Service{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      "test-svc-skip-grant",
+					Namespace: "default",
+					Annotations: map[string]string{
+						"httproute.controller/expose":               "true",
+						"httproute.controller/hostname":             "skip-grant.homelab.local",
+						"httproute.controller/skip-reference-grant": "true",
+					},
+				},
+				Spec: corev1.ServiceSpec{
+					Ports: []corev1.ServicePort{
+						{
+							Port:       80,
+							TargetPort: intstr.FromInt(8080),
+						},
+					},
+				},
+			}
+
+			Expect(k8sClient.Create(ctx, svc)).Should(Succeed())
+			defer func() { _ = k8sClient.Delete(ctx, svc) }()
+
+			// ACT & ASSERT: HTTPRoute should be created
+			route := &gatewayv1.HTTPRoute{}
+			routeKey := types.NamespacedName{
+				Name:      "default-test-svc-skip-grant",
+				Namespace: "envoy-gateway-system",
+			}
+			Eventually(func() bool {
+				err := k8sClient.Get(ctx, routeKey, route)
+				return err == nil
+			}, timeout, interval).Should(BeTrue())
+
+			// ASSERT: ReferenceGrant should NOT be created (skipped)
+			time.Sleep(2 * time.Second) // Give controller time to potentially create it
+			grant := &gatewayv1beta1.ReferenceGrant{}
+			grantKey := types.NamespacedName{
+				Name:      "test-svc-skip-grant-backend",
+				Namespace: "default",
+			}
+			err := k8sClient.Get(ctx, grantKey, grant)
+			Expect(errors.IsNotFound(err)).To(BeTrue(), "ReferenceGrant should NOT be created when skip-reference-grant=true")
+		})
+	})
+
 	Context("When Service is deleted", func() {
 		// NOTE: OwnerReference garbage collection requires kube-controller-manager
 		// which is not present in envtest. This test requires a real cluster.

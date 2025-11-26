@@ -247,3 +247,9 @@ func UncommentCode(filename, target, prefix string) error {
 	// nolint:gosec
 	return os.WriteFile(filename, out.Bytes(), 0644)
 }
+
+// NewStringReader returns a new strings.Reader for the given string.
+// This is a convenience wrapper for using with exec.Cmd.Stdin.
+func NewStringReader(s string) *strings.Reader {
+	return strings.NewReader(s)
+}

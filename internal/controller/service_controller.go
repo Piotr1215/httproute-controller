@@ -26,6 +26,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -36,14 +37,15 @@ import (
 
 // Fixed annotation prefix - not configurable
 const (
-	AnnotationPrefix           = "httproute.controller"
-	AnnotationExpose           = AnnotationPrefix + "/expose"
-	AnnotationHostname         = AnnotationPrefix + "/hostname"
-	AnnotationGateway          = AnnotationPrefix + "/gateway"
-	AnnotationGatewayNamespace = AnnotationPrefix + "/gateway-namespace"
-	AnnotationSectionName      = AnnotationPrefix + "/section-name"
-	AnnotationPort             = AnnotationPrefix + "/port"
-	FinalizerHTTPRoute         = AnnotationPrefix + "/httproute-finalizer"
+	AnnotationPrefix             = "httproute.controller"
+	AnnotationExpose             = AnnotationPrefix + "/expose"
+	AnnotationHostname           = AnnotationPrefix + "/hostname"
+	AnnotationGateway            = AnnotationPrefix + "/gateway"
+	AnnotationGatewayNamespace   = AnnotationPrefix + "/gateway-namespace"
+	AnnotationSectionName        = AnnotationPrefix + "/section-name"
+	AnnotationPort               = AnnotationPrefix + "/port"
+	AnnotationSkipReferenceGrant = AnnotationPrefix + "/skip-reference-grant"
+	FinalizerHTTPRoute           = AnnotationPrefix + "/httproute-finalizer"
 )
 
 // Config holds the controller configuration (required values, no defaults)
@@ -59,11 +61,13 @@ type Config struct {
 // ServiceReconciler reconciles a Service object
 type ServiceReconciler struct {
 	client.Client
-	Scheme *runtime.Scheme
-	Config Config
+	Scheme   *runtime.Scheme
+	Config   Config
+	Recorder record.EventRecorder
 }
 
 // +kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;update;patch
+// +kubebuilder:rbac:groups=core,resources=events,verbs=create;patch
 //nolint:lll
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=httproutes,verbs=get;list;watch;create;update;patch;delete
 //nolint:lll
@@ -171,13 +175,28 @@ func (r *ServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	// Create/Update HTTPRoute
 	if err := r.reconcileHTTPRoute(ctx, svc, hostname, gatewayName, gatewayNamespace, sectionName, port); err != nil {
 		log.Error(err, "failed to reconcile HTTPRoute")
+		r.recordEvent(svc, corev1.EventTypeWarning, "HTTPRouteFailed", fmt.Sprintf("Failed to reconcile HTTPRoute: %v", err))
 		return ctrl.Result{}, err
 	}
+	r.recordEvent(svc, corev1.EventTypeNormal, "HTTPRouteReconciled", fmt.Sprintf("HTTPRoute %s-%s reconciled in namespace %s", svc.Namespace, svc.Name, gatewayNamespace))
 
-	// Create/Update ReferenceGrant
-	if err := r.reconcileReferenceGrant(ctx, svc, gatewayNamespace); err != nil {
-		log.Error(err, "failed to reconcile ReferenceGrant")
-		return ctrl.Result{}, err
+	// Check if ReferenceGrant creation should be skipped
+	skipReferenceGrant := svc.Annotations[AnnotationSkipReferenceGrant] == "true"
+	if skipReferenceGrant {
+		log.Info("ReferenceGrant creation skipped (skip-reference-grant=true)",
+			"service", req.NamespacedName,
+			"reason", "User opted out via annotation")
+		r.recordEvent(svc, corev1.EventTypeWarning, "ReferenceGrantSkipped",
+			"ReferenceGrant creation skipped. Cross-namespace routing may not work without manual ReferenceGrant.")
+	} else {
+		// Create/Update ReferenceGrant
+		if err := r.reconcileReferenceGrant(ctx, svc, gatewayNamespace); err != nil {
+			log.Error(err, "failed to reconcile ReferenceGrant")
+			r.recordEvent(svc, corev1.EventTypeWarning, "ReferenceGrantFailed", fmt.Sprintf("Failed to reconcile ReferenceGrant: %v", err))
+			return ctrl.Result{}, err
+		}
+		r.recordEvent(svc, corev1.EventTypeNormal, "ReferenceGrantReconciled",
+			fmt.Sprintf("ReferenceGrant %s-backend reconciled, allowing HTTPRoute from %s to access this Service", svc.Name, gatewayNamespace))
 	}
 
 	// Add finalizer if not present (ensures cleanup when Service is deleted)
@@ -351,9 +370,15 @@ func (r *ServiceReconciler) cleanupResources(ctx context.Context, svc *corev1.Se
 	if err == nil {
 		// HTTPRoute exists, delete it
 		if err := r.Delete(ctx, route); err != nil && !errors.IsNotFound(err) {
+			log.Error(err, "failed to delete HTTPRoute", "route", routeName, "namespace", gatewayNamespace)
 			return err
 		}
-		log.Info("deleted HTTPRoute", "route", routeName)
+		log.Info("deleted HTTPRoute",
+			"route", routeName,
+			"namespace", gatewayNamespace,
+			"reason", "Service no longer exposed or being deleted")
+		r.recordEvent(svc, corev1.EventTypeNormal, "HTTPRouteDeleted",
+			fmt.Sprintf("HTTPRoute %s deleted from namespace %s", routeName, gatewayNamespace))
 	}
 
 	// Try to delete ReferenceGrant
@@ -363,12 +388,27 @@ func (r *ServiceReconciler) cleanupResources(ctx context.Context, svc *corev1.Se
 	if err == nil {
 		// ReferenceGrant exists, delete it
 		if err := r.Delete(ctx, grant); err != nil && !errors.IsNotFound(err) {
+			log.Error(err, "failed to delete ReferenceGrant", "grant", grantName, "namespace", svc.Namespace)
 			return err
 		}
-		log.Info("deleted ReferenceGrant", "grant", grantName)
+		log.Info("deleted ReferenceGrant",
+			"grant", grantName,
+			"namespace", svc.Namespace,
+			"reason", "Service no longer exposed or being deleted",
+			"securityNote", "Cross-namespace access to this Service is now revoked")
+		r.recordEvent(svc, corev1.EventTypeNormal, "ReferenceGrantDeleted",
+			fmt.Sprintf("ReferenceGrant %s deleted. Cross-namespace access to this Service revoked.", grantName))
 	}
 
 	return nil
+}
+
+// recordEvent records a Kubernetes event on the Service if a Recorder is configured.
+// Events provide visibility into controller operations for users and operators.
+func (r *ServiceReconciler) recordEvent(svc *corev1.Service, eventType, reason, message string) {
+	if r.Recorder != nil {
+		r.Recorder.Event(svc, eventType, reason, message)
+	}
 }
 
 // SetupWithManager sets up the controller with the Manager.

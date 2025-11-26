@@ -52,6 +52,12 @@ Convenience controller for creating HTTPRoutes. Watches Services with specific a
 - Service remains in application namespace (e.g., `default`)
 - ReferenceGrant enables secure cross-namespace backend references
 - Prevents unauthorized Service access from other namespaces
+- ReferenceGrant creation can be opted out via annotation (for manual management)
+
+**Observability:**
+- Kubernetes Events emitted for HTTPRoute/ReferenceGrant creation and deletion
+- Events appear on the Service resource (`kubectl describe svc <name>`)
+- Detailed logging for all ReferenceGrant operations (security-relevant)
 
 **Lifecycle management:**
 - Finalizers ensure HTTPRoute cleanup when Service is deleted
@@ -113,6 +119,7 @@ All annotations use the fixed prefix `httproute.controller`.
 | `httproute.controller/gateway-namespace` | No | From controller flag | Gateway namespace override |
 | `httproute.controller/section-name` | No | `https` | Gateway listener section override |
 | `httproute.controller/port` | No | First port | Service port |
+| `httproute.controller/skip-reference-grant` | No | `false` | Set to `"true"` to skip ReferenceGrant creation |
 
 ### Example
 
