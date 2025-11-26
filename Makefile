@@ -70,23 +70,19 @@ E2E_IMG ?= httproute-controller:e2e
 # CertManager is installed by default; skip with:
 # - CERT_MANAGER_INSTALL_SKIP=true
 .PHONY: test-e2e
-test-e2e: manifests generate fmt vet ## Run the e2e tests. Creates Kind cluster, builds/loads image, runs tests.
-	@command -v kind >/dev/null 2>&1 || { \
-		echo "Kind is not installed. Please install Kind manually."; \
-		exit 1; \
-	}
-	@kind get clusters 2>/dev/null | grep -q "^$(KIND_CLUSTER_NAME)$$" || { \
-		echo "Creating Kind cluster '$(KIND_CLUSTER_NAME)'..."; \
-		kind create cluster --name $(KIND_CLUSTER_NAME); \
-	}
-	@kubectl config use-context kind-$(KIND_CLUSTER_NAME)
-	@echo "Installing Gateway API CRDs..."
-	@$(KUBECTL) apply -f config/crd/gateway-api/gateway-api-crds.yaml
-	@echo "Building image $(E2E_IMG)..."
-	@$(CONTAINER_TOOL) build -t $(E2E_IMG) .
-	@echo "Loading image to Kind cluster..."
-	@kind load docker-image $(E2E_IMG) --name $(KIND_CLUSTER_NAME)
-	KIND_CLUSTER=$(KIND_CLUSTER_NAME) E2E_IMG=$(E2E_IMG) go test ./test/e2e/ -v -ginkgo.v
+test-e2e: manifests generate fmt vet ## Run the e2e tests. Creates Kind cluster, builds/loads image, runs tests, cleans up.
+	@command -v kind >/dev/null 2>&1 || { echo "Kind is not installed."; exit 1; }
+	@kind delete cluster --name $(KIND_CLUSTER_NAME) 2>/dev/null || true
+	@echo "Creating Kind cluster '$(KIND_CLUSTER_NAME)'..."
+	@kind create cluster --name $(KIND_CLUSTER_NAME)
+	@trap 'kind delete cluster --name $(KIND_CLUSTER_NAME)' EXIT; \
+		echo "Installing Gateway API CRDs..."; \
+		$(KUBECTL) apply -f config/crd/gateway-api/gateway-api-crds.yaml; \
+		echo "Building image $(E2E_IMG)..."; \
+		$(CONTAINER_TOOL) build -t $(E2E_IMG) .; \
+		echo "Loading image to Kind cluster..."; \
+		kind load docker-image $(E2E_IMG) --name $(KIND_CLUSTER_NAME); \
+		KIND_CLUSTER=$(KIND_CLUSTER_NAME) E2E_IMG=$(E2E_IMG) go test ./test/e2e/ -v -ginkgo.v
 
 .PHONY: test-e2e-cleanup
 test-e2e-cleanup: ## Delete the e2e test Kind cluster

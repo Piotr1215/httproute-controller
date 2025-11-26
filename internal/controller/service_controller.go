@@ -73,152 +73,101 @@ type ServiceReconciler struct {
 //nolint:lll
 // +kubebuilder:rbac:groups=gateway.networking.k8s.io,resources=referencegrants,verbs=get;list;watch;create;update;patch;delete
 
-// Reconcile implements the reconciliation loop for Service resources.
-// It watches Services with the expose annotation and creates/updates/deletes
-// corresponding HTTPRoute and ReferenceGrant resources.
-//
-// The reconciler follows modern Kubernetes controller best practices:
-// - Level-based triggers (reconciles full state, not just events)
-// - Idempotent operations (safe to call multiple times)
-// - Finalizers for cross-namespace resource cleanup (HTTPRoute)
-// - OwnerReferences for same-namespace resources (ReferenceGrant)
-// - Cross-namespace resource management via ReferenceGrant
 func (r *ServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
 
-	// Fetch the Service
 	svc := &corev1.Service{}
 	if err := r.Get(ctx, req.NamespacedName, svc); err != nil {
 		if errors.IsNotFound(err) {
-			// Service deleted - nothing to do
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
 	}
 
-	// Handle Service deletion with finalizer
+	// Handle deletion
 	if !svc.DeletionTimestamp.IsZero() {
-		// Service is being deleted
 		if controllerutil.ContainsFinalizer(svc, FinalizerHTTPRoute) {
-			// Our finalizer is present - clean up HTTPRoute
-			log.Info("Service being deleted, cleaning up HTTPRoute", "service", req.NamespacedName)
 			if err := r.cleanupResources(ctx, svc); err != nil {
 				return ctrl.Result{}, err
 			}
-
-			// Remove finalizer
 			controllerutil.RemoveFinalizer(svc, FinalizerHTTPRoute)
 			if err := r.Update(ctx, svc); err != nil {
 				return ctrl.Result{}, err
 			}
-			log.Info("Finalizer removed, Service can be deleted", "service", req.NamespacedName)
 		}
 		return ctrl.Result{}, nil
 	}
 
-	// Check if Service should be exposed
-	expose := svc.Annotations[AnnotationExpose]
-	if expose != "true" {
-		// Service not marked for exposure - clean up if resources exist and remove finalizer
+	// Not exposed - cleanup and remove finalizer
+	if svc.Annotations[AnnotationExpose] != "true" {
 		if err := r.cleanupResources(ctx, svc); err != nil {
 			return ctrl.Result{}, err
 		}
-
-		// Remove finalizer if present
 		if controllerutil.ContainsFinalizer(svc, FinalizerHTTPRoute) {
 			controllerutil.RemoveFinalizer(svc, FinalizerHTTPRoute)
 			if err := r.Update(ctx, svc); err != nil {
 				return ctrl.Result{}, err
 			}
-			log.Info("Finalizer removed (expose=false)", "service", req.NamespacedName)
 		}
 		return ctrl.Result{}, nil
 	}
 
-	// Validate required annotations
 	hostname := svc.Annotations[AnnotationHostname]
 	if hostname == "" {
-		log.Error(nil, "hostname annotation required when expose=true", "service", req.NamespacedName)
-		return ctrl.Result{}, nil // Don't requeue - invalid configuration
+		log.Error(nil, "hostname annotation required", "service", req.NamespacedName)
+		return ctrl.Result{}, nil
 	}
 
-	// Get gateway configuration (with defaults from controller config)
 	gatewayName := svc.Annotations[AnnotationGateway]
 	if gatewayName == "" {
 		gatewayName = r.Config.DefaultGateway
 	}
-
 	gatewayNamespace := svc.Annotations[AnnotationGatewayNamespace]
 	if gatewayNamespace == "" {
 		gatewayNamespace = r.Config.DefaultGatewayNamespace
 	}
-
-	// Get section name (with default)
 	sectionName := svc.Annotations[AnnotationSectionName]
 	if sectionName == "" {
 		sectionName = r.Config.DefaultSectionName
 	}
 
-	// Get service port
 	var port int32
 	if portStr := svc.Annotations[AnnotationPort]; portStr != "" {
-		_, _ = fmt.Sscanf(portStr, "%d", &port) // ignore error, fallback to first port if invalid
+		_, _ = fmt.Sscanf(portStr, "%d", &port)
 	}
 	if port == 0 && len(svc.Spec.Ports) > 0 {
 		port = svc.Spec.Ports[0].Port
 	}
 	if port == 0 {
-		log.Error(nil, "no service port found", "service", req.NamespacedName)
+		log.Error(nil, "no port found", "service", req.NamespacedName)
 		return ctrl.Result{}, nil
 	}
 
-	// Create/Update HTTPRoute
 	if err := r.reconcileHTTPRoute(ctx, svc, hostname, gatewayName, gatewayNamespace, sectionName, port); err != nil {
-		log.Error(err, "failed to reconcile HTTPRoute")
-		r.recordEvent(svc, corev1.EventTypeWarning, "HTTPRouteFailed", fmt.Sprintf("Failed to reconcile HTTPRoute: %v", err))
+		r.recordEvent(svc, corev1.EventTypeWarning, "HTTPRouteFailed", err.Error())
 		return ctrl.Result{}, err
 	}
 	r.recordEvent(svc, corev1.EventTypeNormal, "HTTPRouteReconciled",
-		fmt.Sprintf("HTTPRoute %s-%s reconciled in namespace %s", svc.Namespace, svc.Name, gatewayNamespace))
+		fmt.Sprintf("HTTPRoute %s-%s in %s", svc.Namespace, svc.Name, gatewayNamespace))
 
-	// Check if ReferenceGrant creation should be skipped
-	skipReferenceGrant := svc.Annotations[AnnotationSkipReferenceGrant] == "true"
-	if skipReferenceGrant {
-		log.Info("ReferenceGrant creation skipped (skip-reference-grant=true)",
-			"service", req.NamespacedName,
-			"reason", "User opted out via annotation")
-		r.recordEvent(svc, corev1.EventTypeWarning, "ReferenceGrantSkipped",
-			"ReferenceGrant creation skipped. Cross-namespace routing may not work without manual ReferenceGrant.")
-	} else {
-		// Create/Update ReferenceGrant
+	if svc.Annotations[AnnotationSkipReferenceGrant] != "true" {
 		if err := r.reconcileReferenceGrant(ctx, svc, gatewayNamespace); err != nil {
-			log.Error(err, "failed to reconcile ReferenceGrant")
-			r.recordEvent(svc, corev1.EventTypeWarning, "ReferenceGrantFailed",
-				fmt.Sprintf("Failed to reconcile ReferenceGrant: %v", err))
+			r.recordEvent(svc, corev1.EventTypeWarning, "ReferenceGrantFailed", err.Error())
 			return ctrl.Result{}, err
 		}
-		msg := fmt.Sprintf("ReferenceGrant %s-backend reconciled, allowing HTTPRoute from %s",
-			svc.Name, gatewayNamespace)
-		r.recordEvent(svc, corev1.EventTypeNormal, "ReferenceGrantReconciled", msg)
 	}
 
-	// Add finalizer if not present (ensures cleanup when Service is deleted)
 	if !controllerutil.ContainsFinalizer(svc, FinalizerHTTPRoute) {
 		controllerutil.AddFinalizer(svc, FinalizerHTTPRoute)
 		if err := r.Update(ctx, svc); err != nil {
 			return ctrl.Result{}, err
 		}
-		log.Info("Finalizer added to Service", "service", req.NamespacedName)
 	}
 
-	log.Info("successfully reconciled Service", "service", req.NamespacedName, "hostname", hostname)
+	log.Info("reconciled", "service", req.NamespacedName, "hostname", hostname)
 	return ctrl.Result{}, nil
 }
 
-// reconcileHTTPRoute creates or updates the HTTPRoute for the Service.
-// Does NOT use OwnerReferences (cross-namespace not supported by Kubernetes).
-// Cleanup is handled via finalizers on the Service.
-// This is idempotent - safe to call multiple times with same inputs.
 func (r *ServiceReconciler) reconcileHTTPRoute(
 	ctx context.Context, svc *corev1.Service,
 	hostname, gatewayName, gatewayNamespace, sectionNameStr string, port int32,
@@ -233,78 +182,39 @@ func (r *ServiceReconciler) reconcileHTTPRoute(
 		},
 		Spec: gatewayv1.HTTPRouteSpec{
 			CommonRouteSpec: gatewayv1.CommonRouteSpec{
-				ParentRefs: []gatewayv1.ParentReference{
-					{
-						Name:        gatewayv1.ObjectName(gatewayName),
-						Namespace:   (*gatewayv1.Namespace)(&gatewayNamespace),
-						SectionName: &sectionName,
-					},
-				},
+				ParentRefs: []gatewayv1.ParentReference{{
+					Name:        gatewayv1.ObjectName(gatewayName),
+					Namespace:   (*gatewayv1.Namespace)(&gatewayNamespace),
+					SectionName: &sectionName,
+				}},
 			},
-			Hostnames: []gatewayv1.Hostname{
-				gatewayv1.Hostname(hostname),
-			},
-			Rules: []gatewayv1.HTTPRouteRule{
-				{
-					BackendRefs: []gatewayv1.HTTPBackendRef{
-						{
-							BackendRef: gatewayv1.BackendRef{
-								BackendObjectReference: gatewayv1.BackendObjectReference{
-									Name:      gatewayv1.ObjectName(svc.Name),
-									Namespace: (*gatewayv1.Namespace)(&svc.Namespace),
-									Port:      (*gatewayv1.PortNumber)(&port),
-								},
-							},
+			Hostnames: []gatewayv1.Hostname{gatewayv1.Hostname(hostname)},
+			Rules: []gatewayv1.HTTPRouteRule{{
+				BackendRefs: []gatewayv1.HTTPBackendRef{{
+					BackendRef: gatewayv1.BackendRef{
+						BackendObjectReference: gatewayv1.BackendObjectReference{
+							Name:      gatewayv1.ObjectName(svc.Name),
+							Namespace: (*gatewayv1.Namespace)(&svc.Namespace),
+							Port:      (*gatewayv1.PortNumber)(&port),
 						},
 					},
-				},
-			},
+				}},
+			}},
 		},
 	}
 
-	// DO NOT set cross-namespace OwnerReference - Kubernetes API server rejects it
-	// Instead, we use finalizers on the Service to ensure cleanup of HTTPRoute
-	// Cross-namespace ownership is not supported by Kubernetes for security reasons
-
-	// Check if HTTPRoute exists
 	existing := &gatewayv1.HTTPRoute{}
 	err := r.Get(ctx, types.NamespacedName{Name: routeName, Namespace: gatewayNamespace}, existing)
+	if errors.IsNotFound(err) {
+		return r.Create(ctx, route)
+	}
 	if err != nil {
-		if errors.IsNotFound(err) {
-			// Create new HTTPRoute
-			log := log.FromContext(ctx)
-			log.Info("Creating HTTPRoute",
-				"name", route.Name,
-				"namespace", route.Namespace,
-				"hostname", hostname,
-				"ownerRefs", route.OwnerReferences)
-
-			createErr := r.Create(ctx, route)
-			if createErr != nil {
-				log.Error(createErr, "FAILED to create HTTPRoute",
-					"name", route.Name,
-					"namespace", route.Namespace,
-					"error", createErr.Error())
-			} else {
-				log.Info("SUCCESS: HTTPRoute created", "name", route.Name)
-			}
-			return createErr
-		}
 		return err
 	}
-
-	// Update existing HTTPRoute
-	log := log.FromContext(ctx)
-	log.Info("Updating existing HTTPRoute", "name", routeName)
 	existing.Spec = route.Spec
-	// Do NOT update OwnerReferences - cross-namespace ownership not supported
 	return r.Update(ctx, existing)
 }
 
-// reconcileReferenceGrant creates or updates the ReferenceGrant for cross-namespace access.
-// ReferenceGrant allows HTTPRoute in gateway namespace to reference Service in service namespace.
-// Uses controllerutil.SetControllerReference for proper ownership and garbage collection.
-// This is idempotent - safe to call multiple times with same inputs.
 func (r *ServiceReconciler) reconcileReferenceGrant(
 	ctx context.Context, svc *corev1.Service, gatewayNamespace string,
 ) error {
@@ -316,111 +226,68 @@ func (r *ServiceReconciler) reconcileReferenceGrant(
 			Namespace: svc.Namespace,
 		},
 		Spec: gatewayv1beta1.ReferenceGrantSpec{
-			From: []gatewayv1beta1.ReferenceGrantFrom{
-				{
-					Group:     gatewayv1.GroupName,
-					Kind:      gatewayv1.Kind("HTTPRoute"),
-					Namespace: gatewayv1.Namespace(gatewayNamespace),
-				},
-			},
-			To: []gatewayv1beta1.ReferenceGrantTo{
-				{
-					Group: "",
-					Kind:  "Service",
-					Name:  (*gatewayv1.ObjectName)(&svc.Name),
-				},
-			},
+			From: []gatewayv1beta1.ReferenceGrantFrom{{
+				Group:     gatewayv1.GroupName,
+				Kind:      "HTTPRoute",
+				Namespace: gatewayv1.Namespace(gatewayNamespace),
+			}},
+			To: []gatewayv1beta1.ReferenceGrantTo{{
+				Group: "",
+				Kind:  "Service",
+				Name:  (*gatewayv1.ObjectName)(&svc.Name),
+			}},
 		},
 	}
 
-	// Set controller reference for garbage collection
 	if err := controllerutil.SetControllerReference(svc, grant, r.Scheme); err != nil {
 		return err
 	}
 
-	// Check if ReferenceGrant exists
 	existing := &gatewayv1beta1.ReferenceGrant{}
 	err := r.Get(ctx, types.NamespacedName{Name: grantName, Namespace: svc.Namespace}, existing)
+	if errors.IsNotFound(err) {
+		return r.Create(ctx, grant)
+	}
 	if err != nil {
-		if errors.IsNotFound(err) {
-			// Create new ReferenceGrant
-			return r.Create(ctx, grant)
-		}
 		return err
 	}
-
-	// Update existing ReferenceGrant
 	existing.Spec = grant.Spec
 	existing.OwnerReferences = grant.OwnerReferences
 	return r.Update(ctx, existing)
 }
 
-// cleanupResources removes HTTPRoute and ReferenceGrant when Service is no longer exposed.
-// This handles the case where expose annotation is removed or changed to false.
 func (r *ServiceReconciler) cleanupResources(ctx context.Context, svc *corev1.Service) error {
-	log := log.FromContext(ctx)
-
-	// Get gateway namespace from annotation or default
 	gatewayNamespace := svc.Annotations[AnnotationGatewayNamespace]
 	if gatewayNamespace == "" {
 		gatewayNamespace = r.Config.DefaultGatewayNamespace
 	}
 
-	// Try to delete HTTPRoute
 	routeName := fmt.Sprintf("%s-%s", svc.Namespace, svc.Name)
 	route := &gatewayv1.HTTPRoute{}
-	err := r.Get(ctx, types.NamespacedName{Name: routeName, Namespace: gatewayNamespace}, route)
-	if err == nil {
-		// HTTPRoute exists, delete it
+	if err := r.Get(ctx, types.NamespacedName{Name: routeName, Namespace: gatewayNamespace}, route); err == nil {
 		if err := r.Delete(ctx, route); err != nil && !errors.IsNotFound(err) {
-			log.Error(err, "failed to delete HTTPRoute", "route", routeName, "namespace", gatewayNamespace)
 			return err
 		}
-		log.Info("deleted HTTPRoute",
-			"route", routeName,
-			"namespace", gatewayNamespace,
-			"reason", "Service no longer exposed or being deleted")
-		r.recordEvent(svc, corev1.EventTypeNormal, "HTTPRouteDeleted",
-			fmt.Sprintf("HTTPRoute %s deleted from namespace %s", routeName, gatewayNamespace))
+		r.recordEvent(svc, corev1.EventTypeNormal, "HTTPRouteDeleted", routeName)
 	}
 
-	// Try to delete ReferenceGrant
 	grantName := fmt.Sprintf("%s-backend", svc.Name)
 	grant := &gatewayv1beta1.ReferenceGrant{}
-	err = r.Get(ctx, types.NamespacedName{Name: grantName, Namespace: svc.Namespace}, grant)
-	if err == nil {
-		// ReferenceGrant exists, delete it
+	if err := r.Get(ctx, types.NamespacedName{Name: grantName, Namespace: svc.Namespace}, grant); err == nil {
 		if err := r.Delete(ctx, grant); err != nil && !errors.IsNotFound(err) {
-			log.Error(err, "failed to delete ReferenceGrant", "grant", grantName, "namespace", svc.Namespace)
 			return err
 		}
-		log.Info("deleted ReferenceGrant",
-			"grant", grantName,
-			"namespace", svc.Namespace,
-			"reason", "Service no longer exposed or being deleted",
-			"securityNote", "Cross-namespace access to this Service is now revoked")
-		r.recordEvent(svc, corev1.EventTypeNormal, "ReferenceGrantDeleted",
-			fmt.Sprintf("ReferenceGrant %s deleted. Cross-namespace access to this Service revoked.", grantName))
 	}
 
 	return nil
 }
 
-// recordEvent records a Kubernetes event on the Service if a Recorder is configured.
-// Events provide visibility into controller operations for users and operators.
 func (r *ServiceReconciler) recordEvent(svc *corev1.Service, eventType, reason, message string) {
 	if r.Recorder != nil {
 		r.Recorder.Event(svc, eventType, reason, message)
 	}
 }
 
-// SetupWithManager sets up the controller with the Manager.
-// Watches Services and owns ReferenceGrant resources.
-// HTTPRoute is NOT owned via OwnerReferences (cross-namespace not supported).
-// Instead, finalizers on Service ensure cleanup of HTTPRoute on deletion.
-// Uses modern controller-runtime patterns:
-// - For() watches the primary resource (Service)
-// - Owns() watches secondary resources for changes (triggers reconciliation of owner)
 func (r *ServiceReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&corev1.Service{}).
