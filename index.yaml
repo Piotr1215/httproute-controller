@@ -2,6 +2,27 @@ apiVersion: v1
 entries:
   httproute-controller:
   - apiVersion: v2
+    appVersion: v0.3.7
+    created: "2025-11-26T12:12:11.307098132Z"
+    description: Kubernetes controller that automatically generates Gateway API HTTPRoutes
+      from Service annotations
+    digest: 291e2772a8d73b82178c63e80ff12a72c31f3c15cbbced57144321a1fd252a82
+    home: https://github.com/Piotr1215/httproute-controller
+    keywords:
+    - kubernetes
+    - gateway-api
+    - httproute
+    - controller
+    maintainers:
+    - name: Piotr Zaniewski
+    name: httproute-controller
+    sources:
+    - https://github.com/Piotr1215/httproute-controller
+    type: application
+    urls:
+    - https://github.com/Piotr1215/httproute-controller/releases/download/v0.3.7/httproute-controller-0.3.7.tgz
+    version: 0.3.7
+  - apiVersion: v2
     appVersion: v0.3.6
     created: "2025-11-26T08:16:00.134873725Z"
     description: Kubernetes controller that automatically generates Gateway API HTTPRoutes
@@ -106,4 +127,4 @@ entries:
     urls:
     - https://github.com/Piotr1215/httproute-controller/releases/download/v0.3.2/httproute-controller-0.3.2.tgz
     version: 0.3.2
-generated: "2025-11-26T08:16:00.134275357Z"
+generated: "2025-11-26T12:12:11.306572208Z"
