@@ -66,6 +66,10 @@ func main() {
 	var secureMetrics bool
 	var enableHTTP2 bool
 	var tlsOpts []func(*tls.Config)
+
+	// Controller configuration
+	cfg := controller.DefaultConfig()
+
 	flag.StringVar(&metricsAddr, "metrics-bind-address", "0", "The address the metrics endpoint binds to. "+
 		"Use :8443 for HTTPS or :8080 for HTTP, or leave as 0 to disable the metrics service.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
@@ -83,6 +87,16 @@ func main() {
 	flag.StringVar(&metricsCertKey, "metrics-cert-key", "tls.key", "The name of the metrics server key file.")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
+
+	// Controller-specific flags
+	flag.StringVar(&cfg.AnnotationPrefix, "annotation-prefix", cfg.AnnotationPrefix,
+		"Domain prefix for Service annotations (e.g., 'httproute.controller' generates 'httproute.controller/expose')")
+	flag.StringVar(&cfg.DefaultGateway, "default-gateway", cfg.DefaultGateway,
+		"Default gateway name when not specified in Service annotations")
+	flag.StringVar(&cfg.DefaultGatewayNamespace, "default-gateway-namespace", cfg.DefaultGatewayNamespace,
+		"Default gateway namespace when not specified in Service annotations")
+	flag.StringVar(&cfg.DefaultSectionName, "default-section-name", cfg.DefaultSectionName,
+		"Default gateway listener section name (e.g., 'https')")
 	opts := zap.Options{
 		Development: true,
 	}
@@ -186,7 +200,7 @@ func main() {
 		WebhookServer:          webhookServer,
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeaderElection,
-		LeaderElectionID:       "443d868e.homelab.local",
+		LeaderElectionID:       "httproute-controller.io",
 		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
 		// when the Manager ends. This requires the binary to immediately end when the
 		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly
@@ -207,10 +221,17 @@ func main() {
 	if err = (&controller.ServiceReconciler{
 		Client: mgr.GetClient(),
 		Scheme: mgr.GetScheme(),
+		Config: cfg,
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Service")
 		os.Exit(1)
 	}
+
+	setupLog.Info("controller configuration",
+		"annotation-prefix", cfg.AnnotationPrefix,
+		"default-gateway", cfg.DefaultGateway,
+		"default-gateway-namespace", cfg.DefaultGatewayNamespace,
+		"default-section-name", cfg.DefaultSectionName)
 	// +kubebuilder:scaffold:builder
 
 	if metricsCertWatcher != nil {

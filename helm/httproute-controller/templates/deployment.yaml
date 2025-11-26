@@ -39,6 +39,10 @@ spec:
         - --leader-elect
         {{- end }}
         - --health-probe-bind-address=:{{ .Values.healthProbe.port }}
+        - --annotation-prefix={{ .Values.controller.annotationPrefix }}
+        - --default-gateway={{ .Values.controller.defaultGateway }}
+        - --default-gateway-namespace={{ .Values.controller.defaultGatewayNamespace }}
+        - --default-section-name={{ .Values.controller.defaultSectionName }}
         securityContext:
           {{- toYaml .Values.securityContext | nindent 10 }}
         livenessProbe:

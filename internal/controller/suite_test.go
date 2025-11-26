@@ -113,9 +113,18 @@ var _ = BeforeSuite(func() {
 	})
 	Expect(err).ToNot(HaveOccurred())
 
+	// Test configuration matching hardcoded values in test cases
+	testConfig := Config{
+		AnnotationPrefix:        "gateway.homelab.local",
+		DefaultGateway:          "homelab-gateway",
+		DefaultGatewayNamespace: "envoy-gateway-system",
+		DefaultSectionName:      "https",
+	}
+
 	err = (&ServiceReconciler{
 		Client: k8sManager.GetClient(),
 		Scheme: k8sManager.GetScheme(),
+		Config: testConfig,
 	}).SetupWithManager(k8sManager)
 	Expect(err).ToNot(HaveOccurred())
 

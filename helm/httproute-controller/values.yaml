@@ -41,6 +41,17 @@ leaderElection:
 healthProbe:
   port: 8081
 
+# Controller configuration
+controller:
+  # Domain prefix for Service annotations (e.g., 'httproute.controller' generates 'httproute.controller/expose')
+  annotationPrefix: "httproute.controller"
+  # Default gateway name when not specified in Service annotations
+  defaultGateway: "main-gateway"
+  # Default gateway namespace when not specified in Service annotations
+  defaultGatewayNamespace: "gateway-system"
+  # Default gateway listener section name (e.g., 'https')
+  defaultSectionName: "https"
+
 metrics:
   enabled: true
   port: 8443

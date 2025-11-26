@@ -34,19 +34,63 @@ import (
 	gatewayv1beta1 "sigs.k8s.io/gateway-api/apis/v1beta1"
 )
 
-const (
-	AnnotationExpose           = "gateway.homelab.local/expose"
-	AnnotationHostname         = "gateway.homelab.local/hostname"
-	AnnotationGateway          = "gateway.homelab.local/gateway"
-	AnnotationGatewayNamespace = "gateway.homelab.local/gateway-namespace"
-	AnnotationPort             = "gateway.homelab.local/port"
-	FinalizerHTTPRoute         = "gateway.homelab.local/httproute-finalizer"
-)
+// Config holds the controller configuration
+type Config struct {
+	// AnnotationPrefix is the domain prefix for all annotations (e.g., "httproute.controller")
+	AnnotationPrefix string
+	// DefaultGateway is the default gateway name when not specified in annotations
+	DefaultGateway string
+	// DefaultGatewayNamespace is the default gateway namespace when not specified in annotations
+	DefaultGatewayNamespace string
+	// DefaultSectionName is the default gateway listener section name (e.g., "https")
+	DefaultSectionName string
+}
+
+// DefaultConfig returns the default configuration
+func DefaultConfig() Config {
+	return Config{
+		AnnotationPrefix:        "httproute.controller",
+		DefaultGateway:          "main-gateway",
+		DefaultGatewayNamespace: "gateway-system",
+		DefaultSectionName:      "https",
+	}
+}
 
 // ServiceReconciler reconciles a Service object
 type ServiceReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+	Config Config
+}
+
+// AnnotationExpose returns the expose annotation key
+func (r *ServiceReconciler) AnnotationExpose() string {
+	return r.Config.AnnotationPrefix + "/expose"
+}
+
+// AnnotationHostname returns the hostname annotation key
+func (r *ServiceReconciler) AnnotationHostname() string {
+	return r.Config.AnnotationPrefix + "/hostname"
+}
+
+// AnnotationGateway returns the gateway annotation key
+func (r *ServiceReconciler) AnnotationGateway() string {
+	return r.Config.AnnotationPrefix + "/gateway"
+}
+
+// AnnotationGatewayNamespace returns the gateway-namespace annotation key
+func (r *ServiceReconciler) AnnotationGatewayNamespace() string {
+	return r.Config.AnnotationPrefix + "/gateway-namespace"
+}
+
+// AnnotationPort returns the port annotation key
+func (r *ServiceReconciler) AnnotationPort() string {
+	return r.Config.AnnotationPrefix + "/port"
+}
+
+// FinalizerHTTPRoute returns the finalizer name
+func (r *ServiceReconciler) FinalizerHTTPRoute() string {
+	return r.Config.AnnotationPrefix + "/httproute-finalizer"
 }
 
 // +kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;update;patch
@@ -81,7 +125,7 @@ func (r *ServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	// Handle Service deletion with finalizer
 	if !svc.DeletionTimestamp.IsZero() {
 		// Service is being deleted
-		if controllerutil.ContainsFinalizer(svc, FinalizerHTTPRoute) {
+		if controllerutil.ContainsFinalizer(svc, r.FinalizerHTTPRoute()) {
 			// Our finalizer is present - clean up HTTPRoute
 			log.Info("Service being deleted, cleaning up HTTPRoute", "service", req.NamespacedName)
 			if err := r.cleanupResources(ctx, svc); err != nil {
@@ -89,7 +133,7 @@ func (r *ServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 			}
 
 			// Remove finalizer
-			controllerutil.RemoveFinalizer(svc, FinalizerHTTPRoute)
+			controllerutil.RemoveFinalizer(svc, r.FinalizerHTTPRoute())
 			if err := r.Update(ctx, svc); err != nil {
 				return ctrl.Result{}, err
 			}
@@ -99,7 +143,7 @@ func (r *ServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 
 	// Check if Service should be exposed
-	expose := svc.Annotations[AnnotationExpose]
+	expose := svc.Annotations[r.AnnotationExpose()]
 	if expose != "true" {
 		// Service not marked for exposure - clean up if resources exist and remove finalizer
 		if err := r.cleanupResources(ctx, svc); err != nil {
@@ -107,8 +151,8 @@ func (r *ServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		}
 
 		// Remove finalizer if present
-		if controllerutil.ContainsFinalizer(svc, FinalizerHTTPRoute) {
-			controllerutil.RemoveFinalizer(svc, FinalizerHTTPRoute)
+		if controllerutil.ContainsFinalizer(svc, r.FinalizerHTTPRoute()) {
+			controllerutil.RemoveFinalizer(svc, r.FinalizerHTTPRoute())
 			if err := r.Update(ctx, svc); err != nil {
 				return ctrl.Result{}, err
 			}
@@ -118,26 +162,26 @@ func (r *ServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 
 	// Validate required annotations
-	hostname := svc.Annotations[AnnotationHostname]
+	hostname := svc.Annotations[r.AnnotationHostname()]
 	if hostname == "" {
 		log.Error(nil, "hostname annotation required when expose=true", "service", req.NamespacedName)
 		return ctrl.Result{}, nil // Don't requeue - invalid configuration
 	}
 
 	// Get gateway configuration (with defaults)
-	gatewayName := svc.Annotations[AnnotationGateway]
+	gatewayName := svc.Annotations[r.AnnotationGateway()]
 	if gatewayName == "" {
-		gatewayName = "homelab-gateway"
+		gatewayName = r.Config.DefaultGateway
 	}
 
-	gatewayNamespace := svc.Annotations[AnnotationGatewayNamespace]
+	gatewayNamespace := svc.Annotations[r.AnnotationGatewayNamespace()]
 	if gatewayNamespace == "" {
-		gatewayNamespace = "envoy-gateway-system"
+		gatewayNamespace = r.Config.DefaultGatewayNamespace
 	}
 
 	// Get service port
 	var port int32
-	if portStr := svc.Annotations[AnnotationPort]; portStr != "" {
+	if portStr := svc.Annotations[r.AnnotationPort()]; portStr != "" {
 		_, _ = fmt.Sscanf(portStr, "%d", &port) // ignore error, fallback to first port if invalid
 	}
 	if port == 0 && len(svc.Spec.Ports) > 0 {
@@ -161,8 +205,8 @@ func (r *ServiceReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 
 	// Add finalizer if not present (ensures cleanup when Service is deleted)
-	if !controllerutil.ContainsFinalizer(svc, FinalizerHTTPRoute) {
-		controllerutil.AddFinalizer(svc, FinalizerHTTPRoute)
+	if !controllerutil.ContainsFinalizer(svc, r.FinalizerHTTPRoute()) {
+		controllerutil.AddFinalizer(svc, r.FinalizerHTTPRoute())
 		if err := r.Update(ctx, svc); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -182,7 +226,7 @@ func (r *ServiceReconciler) reconcileHTTPRoute(
 	hostname, gatewayName, gatewayNamespace string, port int32,
 ) error {
 	routeName := fmt.Sprintf("%s-%s", svc.Namespace, svc.Name)
-	sectionName := gatewayv1.SectionName("https")
+	sectionName := gatewayv1.SectionName(r.Config.DefaultSectionName)
 
 	route := &gatewayv1.HTTPRoute{
 		ObjectMeta: metav1.ObjectMeta{
@@ -319,9 +363,9 @@ func (r *ServiceReconciler) cleanupResources(ctx context.Context, svc *corev1.Se
 	log := log.FromContext(ctx)
 
 	// Get default gateway namespace
-	gatewayNamespace := svc.Annotations[AnnotationGatewayNamespace]
+	gatewayNamespace := svc.Annotations[r.AnnotationGatewayNamespace()]
 	if gatewayNamespace == "" {
-		gatewayNamespace = "envoy-gateway-system"
+		gatewayNamespace = r.Config.DefaultGatewayNamespace
 	}
 
 	// Try to delete HTTPRoute
