@@ -184,7 +184,7 @@ func (r *ServiceReconciler) reconcileHTTPRoute(
 						BackendObjectReference: gatewayv1.BackendObjectReference{
 							Name:      gatewayv1.ObjectName(svc.Name),
 							Namespace: (*gatewayv1.Namespace)(&svc.Namespace),
-							Port:      (*gatewayv1.PortNumber)(&port),
+							Port:      &port,
 						},
 					},
 				}},
